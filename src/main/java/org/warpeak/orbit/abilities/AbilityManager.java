@@ -366,7 +366,10 @@ public class AbilityManager {
         // время боя должен снимать неявное окно неуязвимости Paper — сразу и
         // на следующем тике. Ранее здесь был только одиночный reset в этом
         // же тике, чего недостаточно.
-        victim.lastDodgeTeleportAt = System.currentTimeMillis();
+        PlayerAbilityData vData = getData(victim);
+        if (vData != null) {
+            vData.lastDodgeTeleportAt = System.currentTimeMillis();
+        }
         clearPostTeleportInvulnWindow(victim, reason);
     }
 
@@ -668,8 +671,11 @@ public class AbilityManager {
         // немедленно после teleport() И на следующем серверном тике.
         // До этого фикса оба игрока были "неуязвимы" ~2 секунды после swap.
         long swapAt = System.currentTimeMillis();
-        p.lastSwapAt = swapAt;
-        target.lastSwapAt = swapAt;
+        data.lastSwapAt = swapAt;
+        PlayerAbilityData tData = getData(target);
+        if (tData != null) {
+            tData.lastSwapAt = swapAt;
+        }
         clearPostTeleportInvulnWindow(p, "t3_swap");
         clearPostTeleportInvulnWindow(target, "t3_swap");
 
