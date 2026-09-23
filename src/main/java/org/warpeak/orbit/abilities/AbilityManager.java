@@ -363,9 +363,10 @@ public class AbilityManager {
         victim.getWorld().spawnParticle(Particle.SMOKE, target.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
 
         // СТАНДАРТНЫЙ паттерн (side-effect баг #2): ЛЮБЫЙ телепорт игрока во
-        // время боя должен снимать неявное окно неуязвимости Paper — сразу и
-        // на следующем тике. Ранее здесь был только одиночный reset в этом
-        // же тике, чего недостаточно.
+        // время боя должен снимать неявное окно неуязвимости Paper —
+        // немедленно + каждый тик в течение 3 секунд (см.
+        // clearPostTeleportInvulnWindow). Одноразового next-tick reset
+        // недостаточно: Paper может (пере)выставить окно позже.
         PlayerAbilityData vData = getData(victim);
         if (vData != null) {
             vData.lastDodgeTeleportAt = System.currentTimeMillis();
