@@ -4,6 +4,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.warpeak.orbit.abilities.AbilityManager;
+import org.warpeak.orbit.abilities.DebugLog;
 import org.warpeak.orbit.arena.ArenaManager;
 import org.warpeak.orbit.cases.CaseManager;
 import org.warpeak.orbit.cases.PrefixManager;
@@ -29,6 +30,13 @@ public final class Orbit extends JavaPlugin {
     @Override
     public void onEnable() {
         instance = this;
+
+        // Отпечаток сборки в логе: видно, какой код реально загружен
+        // (без пересборки jar + рестарта сервера поведение не меняется).
+        DebugLog.log(this, "BUILD",
+                "build=" + DebugLog.BUILD
+                        + " api=" + Bukkit.getBukkitVersion()
+                        + " java=" + System.getProperty("java.version"));
 
         saveDefaultConfig();
 

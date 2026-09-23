@@ -56,6 +56,10 @@ import java.lang.reflect.Method;
  *                        предсобытийная неуязвимость (глубже noDamageTicks).
  *   UI-ACTIVATE        — активация Ультра Инстинкта (старт окна 15с).
  *   UI-EXPIRE          — окончание окна Ультра Инстинкта (через 15с).
+ *   BUILD              — ОДНА строка при старте: build=<commit>, версия API,
+ *                        Java. Сверять с HEAD ветки: если build= старее —
+ *                        на сервере крутится СТАРЫЙ jar (нужна пересборка +
+ *                        рестарт). build= дублируется в TELEPORT-SWAP.
  *   INVULN-API         — ОДНА строка: есть ли в рантайме API 1.21.2+
  *                        invulnerable-causes (полный список методов).
  *   INVULN-CAUSE(S)    — найдена и снята cause-based неуязвимость (Paper
@@ -93,6 +97,15 @@ public final class DebugLog {
     public static volatile boolean ENABLED = true;
 
     public static final String PREFIX = "[OrbitDebug]";
+
+    /**
+     * Отпечаток СБОРКИ (commit, из которого собран jar). Обновлять при каждом
+     * релизе. Строка [BUILD] при старте сервера и build= в TELEPORT-SWAP
+     * позволяют ПО ЛОГУ определить, какой именно код реально крутится на
+     * сервере (актуальный jar или старый — без рестарта/пересборки поведение
+     * не меняется).
+     */
+    public static final String BUILD = "6adfe0c";
 
     private DebugLog() {
     }

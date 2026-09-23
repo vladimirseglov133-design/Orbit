@@ -775,7 +775,8 @@ public class AbilityManager {
 
         DebugLog.log(plugin, "TELEPORT-SWAP",
                 "caster=" + p.getName() + " target=" + target.getName()
-                        + " invulnWindowCleared=immediate+nextTick cdMs=5000");
+                        + " invulnWindowCleared=immediate+nextTick cdMs=5000"
+                        + " build=" + DebugLog.BUILD);
     }
 
     private Player getTargetPlayer(Player p, double maxDistance) {
