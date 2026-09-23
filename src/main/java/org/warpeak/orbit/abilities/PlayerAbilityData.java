@@ -32,6 +32,9 @@ public class PlayerAbilityData {
 
     // Возрождение Феникса — работает 1 раз за дуэль
     public boolean phoenixUsed = false;
+    /** Момент использования Феникса (System.currentTimeMillis) — чтобы
+     *  enforcer swap-окна не переопределял возрождение Феникса. */
+    public long phoenixUsedAt = 0;
 
     // ТИР 4
     public long monsterAuraCooldownUntil = 0;

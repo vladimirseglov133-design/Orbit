@@ -431,7 +431,22 @@ public class AbilityManager {
                     this.cancel();
                     return;
                 }
+                // Состояние ДО сброса — для SWAP-AUDIT (у swap: раз в секунду)
+                boolean isSwap = "t3_swap".equals(reason);
+                int preClear = isSwap ? DebugLog.getNoDamageTicks(plugin, p) : -1;
+                boolean preInvul = isSwap && p.isInvulnerable();
                 forceZeroInvulnState(p, reason, "tick" + ticks);
+                if (isSwap && ticks % 20 == 0) {
+                    String resist = p.hasPotionEffect(PotionEffectType.RESISTANCE)
+                            ? String.valueOf(p.getPotionEffect(PotionEffectType.RESISTANCE).getAmplifier() + 1)
+                            : "none";
+                    DebugLog.log(plugin, "SWAP-AUDIT",
+                            "victim=" + p.getName() + " tick=" + ticks
+                                    + " health=" + p.getHealth()
+                                    + " preClearNoDamageTicks=" + preClear
+                                    + " preClearInvulFlag=" + preInvul
+                                    + " resist=" + resist);
+                }
             }
         }.runTaskTimer(plugin, 1L, 1L);
     }
@@ -440,13 +455,18 @@ public class AbilityManager {
      * Принудительно сбрасывает ИСТОЧНИКИ "боевой неуязвимости" игрока:
      *   1) noDamageTicks > 0 — неявное окно Paper (после teleport() / после хита);
      *   2) флаг invulnerable — если сервер выставляет его при телепорте.
-     * Каждое РЕАЛЬНОЕ сбрасывание пишет строку TELEPORT-INVULN (значение и
-     * фаза) — иначе шум в логах не добавляем.
+     * Сброс noDamageTicks УЛОВНЫЙ (выполняется ВСЕГДА) и не зависит от
+     * доступности диагностического геттера: если геттер недоступен
+     * (вернёт -1), окно всё равно снимается. Строка TELEPORT-INVULN
+     * пишется, только если реально найдено ненулевое значение.
      */
     private void forceZeroInvulnState(Player p, String reason, String phase) {
+        // Диагностическое значение (для лога) — оно НЕ используется как
+        // условие сброса (при таком условии окно Paper могло не сниматься
+        // на рантайме, где геттер не резолвится).
         int noDamageTicks = DebugLog.getNoDamageTicks(plugin, p);
+        p.setNoDamageTicks(0);
         if (noDamageTicks > 0) {
-            p.setNoDamageTicks(0);
             DebugLog.log(plugin, "TELEPORT-INVULN",
                     "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
                             + " noDamageTicksFound=" + noDamageTicks + " -> cleared");
@@ -473,6 +493,7 @@ public class AbilityManager {
         if (data.phoenixUsed) return false;
 
         data.phoenixUsed = true;
+        data.phoenixUsedAt = System.currentTimeMillis();
 
         double max = p.getAttribute(Attribute.MAX_HEALTH).getValue();
         p.setHealth(Math.max(1.0, max / 2.0));
@@ -696,8 +717,17 @@ public class AbilityManager {
         p.getWorld().spawnParticle(Particle.PORTAL, pLoc.clone().add(0, 1, 0), 30, 0.3, 0.5, 0.3, 0.05);
         target.getWorld().spawnParticle(Particle.PORTAL, tLoc.clone().add(0, 1, 0), 30, 0.3, 0.5, 0.3, 0.05);
 
+        // ДО УМА: после обмена игроки смотрят друг на друга
+        tLoc.setDirection(pLoc.toVector().subtract(tLoc.toVector()));
+        pLoc.setDirection(tLoc.toVector().subtract(pLoc.toVector()));
+
         p.teleport(tLoc);
         target.teleport(pLoc);
+
+        // Останавливаем старый импульс: иначе после длинного телепорта игрок
+        // сохраняет предтелепортационную скорость и может "пролететь" арену
+        p.setVelocity(new Vector());
+        target.setVelocity(new Vector());
 
         // === FIX (баг #2) ===
         // Bukkit/Paper Entity#teleport() неявно выставляет короткое окно
@@ -1007,6 +1037,7 @@ public class AbilityManager {
 
         // Скорость 2 (амплифаер 1)
         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, (int) ULTRA_INSTINCT_DURATION_TICKS, 1));
+        DebugLog.log(plugin, "UI-ACTIVATE", "player=" + p.getName() + " durationMs=15000 cdMs=120000");
 
         World w = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
@@ -1029,6 +1060,7 @@ public class AbilityManager {
         data.ultraInstinctAuraTask = auraTask;
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            DebugLog.log(plugin, "UI-EXPIRE", "player=" + p.getName() + " durationMs=15000");
             data.ultraInstinctActive = false;
             reapplyPassiveEffects(p, data);
             if (data.ultraInstinctAuraTask != -1) Bukkit.getScheduler().cancelTask(data.ultraInstinctAuraTask);

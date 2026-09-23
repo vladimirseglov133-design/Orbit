@@ -5,15 +5,21 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.potion.PotionEffectType;
 import org.warpeak.orbit.Orbit;
 import org.warpeak.orbit.abilities.DebugLog;
 import org.warpeak.orbit.abilities.PlayerAbilityData;
 import org.warpeak.orbit.duel.DuelManager;
 
 /**
- * MONITOR = выполняется САМЫМ ПОСЛЕДНИМ, после абсолютно всех остальных плагинов и листенеров.
- * Показывает ИТОГОВОЕ состояние события — было ли оно отменено и с какой
- * finalDamage — плюс состояние ЖЕРТВЫ в момент хита для атрибуции причины.
+ * MONITOR = второй по позднему приоритет Paper: все "обычные" листенеры
+ * (LOWEST..HIGHEST) уже отработали; после MONITOR выполняется наш
+ * enforcer (LATEST, см. SwapDamageEnforcerListener). Строка DAMAGE — это
+ * СНИМОК ИТОГОВОГО состояния ПЕРЕД enforcer: отменено ли событие и с
+ * какой finalDamage, плюс состояние ЖЕРТВЫ в момент хита (health до
+ * хита, resist, noDamageTicks) для атрибуции причины. Если в окно swap
+ * cancelled=true и за строкой DAMAGE следует SWAP-UNCANCEL — урон
+ * всё же прошёл (внешнее отменение переопределено).
  *
  * Это "источник правды" для верификации фикса багов неуязвимости:
  * на хитах, прилетевших в окне 1–3 секунд после Teleport Swap, строка
@@ -44,6 +50,10 @@ public class DamageDebugListener implements Listener {
         String tier4 = (data != null && data.tier4 != null) ? data.tier4.name() : "none";
         boolean instinctActive = data != null && data.ultraInstinctActive;
         int noDamageTicks = DebugLog.getNoDamageTicks(Orbit.get(), victim);
+        String resist = victim.hasPotionEffect(PotionEffectType.RESISTANCE)
+                ? String.valueOf(victim.getPotionEffect(PotionEffectType.RESISTANCE).getAmplifier() + 1)
+                : "none";
+        double healthPre = victim.getHealth();
 
         long msSinceSwap = (data != null && data.lastSwapAt > 0) ? now - data.lastSwapAt : -1;
         long msSinceDodgeTl = (data != null && data.lastDodgeTeleportAt > 0) ? now - data.lastDodgeTeleportAt : -1;
@@ -57,6 +67,8 @@ public class DamageDebugListener implements Listener {
                         + " | victimInstinctActive=" + instinctActive
                         + " | victimNoDamageTicks=" + noDamageTicks
                         + " | msSinceSwap=" + msSinceSwap
-                        + " | msSinceDodgeTeleport=" + msSinceDodgeTl);
+                        + " | msSinceDodgeTeleport=" + msSinceDodgeTl
+                        + " | victimResist=" + resist
+                        + " | victimHealthPre=" + healthPre);
     }
 }

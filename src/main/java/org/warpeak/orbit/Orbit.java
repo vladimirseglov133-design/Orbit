@@ -71,6 +71,7 @@ public final class Orbit extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PrefixMenuListener(), this);
         getServer().getPluginManager().registerEvents(new PhoenixRebirthListener(duelManager), this);
         getServer().getPluginManager().registerEvents(new DamageDebugListener(duelManager), this);
+        getServer().getPluginManager().registerEvents(new SwapDamageEnforcerListener(duelManager), this);
 
         getCommand("duelaccept").setExecutor(new DuelCommand(duelManager, true));
         getCommand("dueldecline").setExecutor(new DuelCommand(duelManager, false));

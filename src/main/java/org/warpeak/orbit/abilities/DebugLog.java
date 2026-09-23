@@ -41,7 +41,21 @@ import java.lang.reflect.Method;
  *                        окно неуязвимости снято двойным reset.
  *   DAMAGE             — MONITOR-строка: ИТОГОВОЕ состояние события
  *                        (cancelled/finalDamage) + состояние жертвы в момент
- *                        хита, включая msSinceSwap / msSinceDodgeTeleport. *   API-CHECK          — ОДНА строка при первом чтении noDamageTicks: есть ли *                        в рантайме геттер Entity#getNoDamageTicks.
+ *                        хита, включая msSinceSwap / msSinceDodgeTeleport.
+ *   API-CHECK          — ОДНА строка при первом чтении noDamageTicks: есть ли
+ *                        в рантайме геттер Entity#getNoDamageTicks.
+ *   SWAP-UNCANCEL      — LATEST-enforcer (SwapDamageEnforcerListener) снял
+ *                        ВНЕШНЕЕ отменение урона в окне 0–3с после Teleport
+ *                        Swap: урон принудительно включён. Строка следует за
+ *                        DAMAGE-строкой с cancelled=true, если чужой плагин
+ *                        отменил событие (доказательство внешнего отменения).
+ *   SWAP-AUDIT         — состояние каждого участника swap раз в секунду в
+ *                        3-секундном окне форсинга: health, noDamageTicks /
+ *                        invulnerable ДО сброса, уровень RESISTANCE. Ровный
+ *                        health + нули флагов + нет DAMAGE-строк = "невидимая"
+ *                        предсобытийная неуязвимость (глубже noDamageTicks).
+ *   UI-ACTIVATE        — активация Ультра Инстинкта (старт окна 15с).
+ *   UI-EXPIRE          — окончание окна Ультра Инстинкта (через 15с).
  *
  * Алгоритм атрибуции для тест-сессии:
  *   1. cancelled=true + строка DODGE-T3-DODGE той же жертвы/атакующего тем
@@ -55,9 +69,15 @@ import java.lang.reflect.Method;
  *      атрибировать его к UI без строки с active=true запрещено).
  *   4. Хит "исчез" (DAMAGE-строки нет) после телепорта + строка
  *      TELEPORT-INVULN рядом → неявное окно неуязвимости Paper (баг #2).
- *      После фикса такое окно снимается двойным reset и DAMAGE-строки
- *      в окне 1–3 секунд после swap должны показывать cancelled=false,
- *      finalDamage>0.
+ *      После фикса такое окно снимается 60-тиковым форсингом (каждый тик
+ *      окна 3с) и DAMAGE-строки в окне 1–3 секунд после swap должны
+ *      показывать cancelled=false, finalDamage>0.
+ *   5. В окне 0–3с после swap DAMAGE с cancelled=true, а после неё строка
+ *      SWAP-UNCANCEL → урон ВНЕШНЕ отменялся чужим плагином/серверным
+ *      кодом (не Paper-окно!): enforcer включил его принудительно.
+ *   6. В окне swap health из SWAP-AUDIT ровный (не падает), все флаги нули,
+ *      DAMAGE-строк нет → неуязвимость на уровне ВЫШЕ noDamageTicks.
+ *      В этом случае нужен точный билд Paper и список плагинов.
  */
 public final class DebugLog {
 
