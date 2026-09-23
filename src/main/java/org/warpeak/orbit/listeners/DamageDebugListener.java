@@ -43,7 +43,7 @@ public class DamageDebugListener implements Listener {
         String tier3 = (data != null && data.tier3 != null) ? data.tier3.name() : "none";
         String tier4 = (data != null && data.tier4 != null) ? data.tier4.name() : "none";
         boolean instinctActive = data != null && data.ultraInstinctActive;
-        int noDamageTicks = DebugLog.getNoDamageTicks(victim);
+        int noDamageTicks = DebugLog.getNoDamageTicks(Orbit.get(), victim);
 
         long msSinceSwap = (data != null && data.lastSwapAt > 0) ? now - data.lastSwapAt : -1;
         long msSinceDodgeTl = (data != null && data.lastDodgeTeleportAt > 0) ? now - data.lastDodgeTeleportAt : -1;

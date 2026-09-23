@@ -374,6 +374,13 @@ public class AbilityManager {
     }
 
     /**
+     * Как долго форсируем снятие окна неуязвимости после боевого телепорта (тиков).
+     * 60 тиков = 3 секунды: накрывает верификационное окно 1–3с после swap и
+     * любое "отложенное" повторное выставление окна Paper.
+     */
+    private static final int POST_TELEPORT_INVULN_FORCE_TICKS = 60;
+
+    /**
      * Стандартный safety-паттерн после ЛЮБОГО Entity#teleport() на игрока в
      * активном бою (Teleport Swap, Dodge-уворот, Ультра Инстинкт и любые
      * будущие телепорт-способности).
@@ -385,41 +392,71 @@ public class AbilityManager {
      * может вообще не срабатывать). Именно это давало ~2 секунды "бессмертия"
      * ОБЕИМ игрокам после Teleport Swap (баг #2).
      *
-     * Окно снимается ДВОЙНЫМ reset:
-     *   1) немедленно после teleport();
-     *   2) на СЛЕДУЮЩЕМ серверном тике (Bukkit.getScheduler().runTask) —
-     *      потому что Paper иногда выставляет окно ЧУТЬ ПОЗЖЕ, уже после
-     *      завершения вызова teleport() в рамках того же тика.
+     * ВАЖНО (фикс повторной неуязвимости): одноразового reset на следующем
+     * тике НЕДОСТАТОЧНО — Paper может (пере)выставить окно в ЛЮБОЙ
+     * последующий тик (наблюдались повторные выставления и заметно позже,
+     * чем в том же тике). Поэтому:
+     *   1) сбрасываем окно НЕМЕДЛЕННО после teleport();
+     *   2) затем КАЖДЫЙ тик в течение POST_TELEPORT_INVULN_FORCE_TICKS
+     *      принудительно держим noDamageTicks = 0 (и снимаем флаг
+     *      invulnerable, если сервер выставляет его при телепорте).
      *
-     * Оба прохода пишут строку TELEPORT-INVULN, только если реально нашли
-     * ненулевое окно (это прямое доказательство "обычного окна Paper"),
-     * иначе строк нет — шум в логах не добавляем.
+     * Любое реальное сбрасывание логируется строкой TELEPORT-INVULN с фазой
+     * (immediate / tickN) и значением — это прямое доказательство "окна
+     * Paper" с точным тиком, когда оно (пере)выставлялось. Если таких строк
+     * нет вообще — окно не выставляется, и неуязвимость имеет иную причину
+     * (см. UI-RNG / DODGE-T3 / DAMAGE строки).
+     *
+     * Следствие для Ультра Инстинкта: каждый уворот телепортирует игрока и
+     * запускает новый 3-секундный цикл форсинга, поэтому в бою с активным UI
+     * окно неуязвимости не успевает закрепиться, и все НЕ-ододженные (50%)
+     * хиты проходят полностью — "неуязвимость на всё время UI" исключена.
      *
      * @param reason для атрибуции: t3_swap / t3_dodge / ui_dodge
      */
     private void clearPostTeleportInvulnWindow(Player p, String reason) {
-        // Проход 1: немедленно
-        int before = DebugLog.getNoDamageTicks(p);
-        p.setNoDamageTicks(0);
-        if (before > 0) {
+        // Проход 1: немедленно (окно, выставленное синхронно внутри teleport())
+        forceZeroInvulnState(p, reason, "immediate");
+
+        // Проходы 2..N: каждый тик, пока длится окно форсинга (3 секунды).
+        // Ловит ЛЮБОЕ повторное выставление окна Paper, независимо от того,
+        // в каком тике именно Paper его (пере)выставит.
+        new BukkitRunnable() {
+            private int ticks = 0;
+
+            @Override
+            public void run() {
+                if (!p.isOnline() || ++ticks > POST_TELEPORT_INVULN_FORCE_TICKS) {
+                    this.cancel();
+                    return;
+                }
+                forceZeroInvulnState(p, reason, "tick" + ticks);
+            }
+        }.runTaskTimer(plugin, 1L, 1L);
+    }
+
+    /**
+     * Принудительно сбрасывает ИСТОЧНИКИ "боевой неуязвимости" игрока:
+     *   1) noDamageTicks > 0 — неявное окно Paper (после teleport() / после хита);
+     *   2) флаг invulnerable — если сервер выставляет его при телепорте.
+     * Каждое РЕАЛЬНОЕ сбрасывание пишет строку TELEPORT-INVULN (значение и
+     * фаза) — иначе шум в логах не добавляем.
+     */
+    private void forceZeroInvulnState(Player p, String reason, String phase) {
+        int noDamageTicks = DebugLog.getNoDamageTicks(plugin, p);
+        if (noDamageTicks > 0) {
+            p.setNoDamageTicks(0);
             DebugLog.log(plugin, "TELEPORT-INVULN",
-                    "victim=" + p.getName() + " reason=" + reason
-                            + " phase=immediate noDamageTicksFound=" + before + " -> cleared");
+                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
+                            + " noDamageTicksFound=" + noDamageTicks + " -> cleared");
         }
 
-        // Проход 2: следующий серверный тик (страховка от "отложенного"
-        // выставления окна Paper)
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            if (!p.isOnline()) return;
-            int residual = DebugLog.getNoDamageTicks(p);
-            if (residual > 0) {
-                p.setNoDamageTicks(0);
-                DebugLog.log(plugin, "TELEPORT-INVULN",
-                        "victim=" + p.getName() + " reason=" + reason
-                                + " phase=nextTick noDamageTicksFound=" + residual
-                                + " -> cleared (Paper re-applied window after teleport call)");
-            }
-        });
+        if (p.isInvulnerable()) {
+            p.setInvulnerable(false);
+            DebugLog.log(plugin, "TELEPORT-INVULN",
+                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
+                            + " invulnerableFlag=true -> cleared");
+        }
     }
 
     // ==================== Возрождение Феникса (тир3, реактивная) ====================

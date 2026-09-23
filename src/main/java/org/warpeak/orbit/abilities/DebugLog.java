@@ -41,7 +41,7 @@ import java.lang.reflect.Method;
  *                        окно неуязвимости снято двойным reset.
  *   DAMAGE             — MONITOR-строка: ИТОГОВОЕ состояние события
  *                        (cancelled/finalDamage) + состояние жертвы в момент
- *                        хита, включая msSinceSwap / msSinceDodgeTeleport.
+ *                        хита, включая msSinceSwap / msSinceDodgeTeleport. *   API-CHECK          — ОДНА строка при первом чтении noDamageTicks: есть ли *                        в рантайме геттер Entity#getNoDamageTicks.
  *
  * Алгоритм атрибуции для тест-сессии:
  *   1. cancelled=true + строка DODGE-T3-DODGE той же жертвы/атакующего тем
@@ -82,10 +82,16 @@ public final class DebugLog {
      * отладочной атрибуции, поэтому жёсткую зависимость от него не создаём:
      * на Paper метод есть и лог покажет фактическое значение окна,
      * на сборках, где его нет, — вернёт -1 ("недоступно") и не сломает билд.
+     *
+     * ПЕРВЫЙ вызов пишет строку API-CHECK (getter=available/unavailable) —
+     * если в логах тест-сессии стоит "unavailable", это значит, что значения
+     * noDamageTicks в TELEPORT-INVULN/DAMAGE строках видны как -1 и окно
+     * Paper нельзя подтвердить по значению — ориентироваться надо только
+     * на факты "урон не прошёл" (отсутствие DAMAGE-строк).
      */
-    public static int getNoDamageTicks(Player p) {
+    public static int getNoDamageTicks(Plugin plugin, Player p) {
         if (p == null || !p.isOnline()) return -1;
-        Method m = noDamageTicksMethod();
+        Method m = noDamageTicksMethod(plugin);
         if (m == null) return -1;
         try {
             Object value = m.invoke(p);
@@ -98,7 +104,7 @@ public final class DebugLog {
     private static volatile boolean probed = false;
     private static volatile Method cachedGetNoDamageTicksMethod;
 
-    private static Method noDamageTicksMethod() {
+    private static Method noDamageTicksMethod(Plugin plugin) {
         if (!probed) {
             try {
                 cachedGetNoDamageTicksMethod = Entity.class.getMethod("getNoDamageTicks");
@@ -106,6 +112,9 @@ public final class DebugLog {
                 cachedGetNoDamageTicksMethod = null;
             }
             probed = true;
+            log(plugin, "API-CHECK",
+                    "Entity#getNoDamageTicks getter="
+                            + (cachedGetNoDamageTicksMethod != null ? "available" : "UNAVAILABLE (noDamageTicks в логах будет -1)"));
         }
         return cachedGetNoDamageTicksMethod;
     }
