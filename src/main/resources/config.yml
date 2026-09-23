@@ -1,0 +1,28 @@
+# Вернуть игрока туда, где он был до дуэли (true)
+# или на точку лобби ниже (false)
+return-to-original-location: false
+
+rewards:
+  win-coins: 5
+
+lobby:
+  world: world
+  x: 200
+  y: -27
+  z: -95.500
+  yaw: 0
+  pitch: 0
+
+arena:
+  spawn1:
+    x: 34
+    y: 1
+    z: 32
+  spawn2:
+    x: -34
+    y: 1
+    z: 32
+  void-y-limit: 50
+
+case:
+  price: 100
