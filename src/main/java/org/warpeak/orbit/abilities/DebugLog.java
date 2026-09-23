@@ -56,6 +56,14 @@ import java.lang.reflect.Method;
  *                        предсобытийная неуязвимость (глубже noDamageTicks).
  *   UI-ACTIVATE        — активация Ультра Инстинкта (старт окна 15с).
  *   UI-EXPIRE          — окончание окна Ультра Инстинкта (через 15с).
+ *   INVULN-API         — ОДНА строка: есть ли в рантайме API 1.21.2+
+ *                        invulnerable-causes (полный список методов).
+ *   INVULN-CAUSE(S)    — найдена и снята cause-based неуязвимость (Paper
+ *                        1.21.2+): кто, когда (reason/phase) и какая причина.
+ *                        Строки появляются ТОЛЬКО при реальной находке.
+ *   В SWAP-AUDIT поле distOpponent: дистанция до оппонента. Если она
+ *                        велика (10+) — "бесмертие" = восприятие (дистанция),
+ *                        а не блокировка урона.
  *
  * Алгоритм атрибуции для тест-сессии:
  *   1. cancelled=true + строка DODGE-T3-DODGE той же жертвы/атакующего тем
@@ -137,5 +145,83 @@ public final class DebugLog {
                             + (cachedGetNoDamageTicksMethod != null ? "available" : "UNAVAILABLE (noDamageTicks в логах будет -1)"));
         }
         return cachedGetNoDamageTicksMethod;
+    }
+
+    // ==================== Paper 1.21.2+: cause-based invulnerability ====================
+    // На новых сборках окно неуязвимости (в т.ч. после teleport()) может
+    // храниться НЕ в noDamageTicks/invulnerable, а в таблице "причин"
+    // (invulnerable causes). setNoDamageTicks(0)/setInvulnerable(false) такое
+    // окно не снимают. Пробираем API через рефлексию (нет compile-зависимости
+    // от версии Paper): на старых сборках все методы отсутствуют и это
+    // безобидный no-op; строка INVULN-API говорит, есть ли API в рантайме.
+    private static volatile boolean invulnApiProbed = false;
+    private static volatile Method cachedInvulnCauseGetter;
+    private static volatile Method cachedInvulnCausesGetter;
+    private static volatile Method cachedInvulnCauseSetter;
+    private static volatile Method cachedInvulnCausesSetter;
+
+    private static void probeInvulnCauseApi(Plugin plugin) {
+        if (invulnApiProbed) return;
+        invulnApiProbed = true;
+        try {
+            for (Method m : Entity.class.getMethods()) {
+                String n = m.getName();
+                if (m.getParameterCount() == 0 && n.equals("getInvulnerableCause")) {
+                    cachedInvulnCauseGetter = m;
+                } else if (m.getParameterCount() == 0 && n.equals("getInvulnerableCauses")) {
+                    cachedInvulnCausesGetter = m;
+                } else if (m.getParameterCount() == 1 && n.equals("setInvulnerableCause")) {
+                    cachedInvulnCauseSetter = m;
+                } else if (m.getParameterCount() == 1 && n.equals("setInvulnerableCauses")) {
+                    cachedInvulnCausesSetter = m;
+                }
+            }
+        } catch (Throwable ignored) { }
+        boolean none = cachedInvulnCauseGetter == null && cachedInvulnCausesGetter == null
+                && cachedInvulnCauseSetter == null && cachedInvulnCausesSetter == null;
+        log(plugin, "INVULN-API",
+                "getInvulnerableCause=" + (cachedInvulnCauseGetter != null ? "available" : "absent")
+                        + " getInvulnerableCauses=" + (cachedInvulnCausesGetter != null ? "available" : "absent")
+                        + " setInvulnerableCause=" + (cachedInvulnCauseSetter != null ? "available" : "absent")
+                        + " setInvulnerableCauses=" + (cachedInvulnCausesSetter != null ? "available" : "absent")
+                        + (none ? " -> API 1.21.2+ в рантайме НЕТ (cause-based неуязвимость исключена)"
+                                : " -> API 1.21.2+ найден, cause-окна будут сниматься"));
+    }
+
+    /**
+     * Пытается снять cause-based неуязвимость (Paper 1.21.2+).
+     * Строки INVULN-CAUSE/INVULN-CAUSES пишутся ТОЛЬКО если причина реально
+     * найдена (иначе шум). На сборках без API — silent no-op.
+     */
+    public static void clearInvulnCauses(Plugin plugin, Player p, String reason, String phase) {
+        probeInvulnCauseApi(plugin);
+        if (cachedInvulnCauseGetter == null && cachedInvulnCausesGetter == null) return;
+        try {
+            if (cachedInvulnCauseGetter != null) {
+                Object cause = cachedInvulnCauseGetter.invoke(p);
+                if (cause != null) {
+                    log(plugin, "INVULN-CAUSE",
+                            "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
+                                    + " cause=" + cause + " -> clearing");
+                    if (cachedInvulnCauseSetter != null) {
+                        cachedInvulnCauseSetter.invoke(p, (Object) null);
+                    }
+                }
+            }
+            if (cachedInvulnCausesGetter != null) {
+                Object causes = cachedInvulnCausesGetter.invoke(p);
+                if (causes != null) {
+                    String s = String.valueOf(causes);
+                    if (!s.isEmpty() && !s.equals("[]")) {
+                        log(plugin, "INVULN-CAUSES",
+                                "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
+                                        + " causes=" + s + " -> clearing");
+                        if (cachedInvulnCausesSetter != null) {
+                            cachedInvulnCausesSetter.invoke(p, java.util.Collections.emptyList());
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) { }
     }
 }

@@ -440,9 +440,23 @@ public class AbilityManager {
                     String resist = p.hasPotionEffect(PotionEffectType.RESISTANCE)
                             ? String.valueOf(p.getPotionEffect(PotionEffectType.RESISTANCE).getAmplifier() + 1)
                             : "none";
+                    // Дистанция до оппонента: если она велика — "бесмертие"
+                    // на самом деле восприятие (игроки далеко/улетели), а не
+                    // блокировка урона.
+                    String dist = "n/a";
+                    try {
+                        org.warpeak.orbit.duel.Duel duel = Orbit.get().getDuelManager().getDuel(p);
+                        if (duel != null) {
+                            Player op = duel.getOpponent(p);
+                            if (op != null && op.isOnline()) {
+                                dist = String.format(Locale.ROOT, "%.1f", p.getLocation().distance(op.getLocation()));
+                            }
+                        }
+                    } catch (Exception ignored) { }
                     DebugLog.log(plugin, "SWAP-AUDIT",
                             "victim=" + p.getName() + " tick=" + ticks
                                     + " health=" + p.getHealth()
+                                    + " distOpponent=" + dist
                                     + " preClearNoDamageTicks=" + preClear
                                     + " preClearInvulFlag=" + preInvul
                                     + " resist=" + resist);
@@ -478,6 +492,11 @@ public class AbilityManager {
                     "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
                             + " invulnerableFlag=true -> cleared");
         }
+
+        // Paper 1.21.2+: окно неуязвимости может храниться в "причинах"
+        // (invulnerable causes), а не в noDamageTicks/invulnerable.
+        // Пробуется через рефлексию — на старых сборках это безобидный no-op.
+        DebugLog.clearInvulnCauses(plugin, p, reason, phase);
     }
 
     // ==================== Возрождение Феникса (тир3, реактивная) ====================
@@ -1060,6 +1079,9 @@ public class AbilityManager {
         data.ultraInstinctAuraTask = auraTask;
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            // ДО УМА: если игрок умер/ушёл офлайн (или дуэль завершена и clear()
+            // уже снял эффекты) — не применяем passive-эффекты к трупу/оффлайну.
+            if (!p.isOnline() || p.isDead()) return;
             DebugLog.log(plugin, "UI-EXPIRE", "player=" + p.getName() + " durationMs=15000");
             data.ultraInstinctActive = false;
             reapplyPassiveEffects(p, data);
