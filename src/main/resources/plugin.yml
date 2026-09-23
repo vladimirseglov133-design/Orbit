@@ -1,0 +1,39 @@
+name: Orbit
+version: '1.0'
+main: org.warpeak.orbit.Orbit
+api-version: '1.21'
+softdepend: [WorldEdit, FastAsyncWorldEdit, LuckPerms]
+
+commands:
+  duelaccept:
+    description: Принять дуэль
+  dueldecline:
+    description: Отклонить дуэль
+  duelleave:
+    description: Покинуть дуэль
+  setlobby:
+    description: Установить точку лобби на текущую позицию
+  setcase:
+    description: Установить кейс префиксов на сундук
+  addcoins:
+    description: Выдать монеты игроку
+    usage: /addcoins <ник> <количество>
+    permission: orbit.admin.coins
+  removecoins:
+    description: Забрать монеты у игрока
+    usage: /removecoins <ник> <количество>
+    permission: orbit.admin.coins
+  settophologram:
+    description: Установить голограмму топа на текущую позицию
+    usage: /settophologram <kills|coins>
+  removetophologram:
+    description: Удалить голограмму топа
+    usage: /removetophologram <kills|coins>
+  purgetopholograms:
+    description: Удалить ВСЕ TextDisplay-сущности в радиусе вокруг игрока и пересоздать актуальные голограммы
+    usage: /purgetopholograms [радиус_в_блоках]
+    permission: orbit.admin
+permissions:
+  orbit.admin.coins:
+    description: Доступ к командам выдачи/снятия монет
+    default: op
