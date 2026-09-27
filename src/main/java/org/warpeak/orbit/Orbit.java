@@ -2,9 +2,9 @@ package org.warpeak.orbit;
 
 import org.bukkit.Bukkit;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.warpeak.orbit.abilities.AbilityManager;
-import org.warpeak.orbit.abilities.DebugLog;
 import org.warpeak.orbit.arena.ArenaManager;
 import org.warpeak.orbit.cases.CaseManager;
 import org.warpeak.orbit.cases.PrefixManager;
@@ -30,13 +30,6 @@ public final class Orbit extends JavaPlugin {
     @Override
     public void onEnable() {
         instance = this;
-
-        // Отпечаток сборки в логе: видно, какой код реально загружен
-        // (без пересборки jar + рестарта сервера поведение не меняется).
-        DebugLog.log(this, "BUILD",
-                "build=" + DebugLog.BUILD
-                        + " api=" + Bukkit.getBukkitVersion()
-                        + " java=" + System.getProperty("java.version"));
 
         saveDefaultConfig();
 
@@ -78,8 +71,6 @@ public final class Orbit extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new CaseGUIListener(), this);
         getServer().getPluginManager().registerEvents(new PrefixMenuListener(), this);
         getServer().getPluginManager().registerEvents(new PhoenixRebirthListener(duelManager), this);
-        getServer().getPluginManager().registerEvents(new DamageDebugListener(duelManager), this);
-        getServer().getPluginManager().registerEvents(new SwapDamageEnforcerListener(duelManager), this);
 
         getCommand("duelaccept").setExecutor(new DuelCommand(duelManager, true));
         getCommand("dueldecline").setExecutor(new DuelCommand(duelManager, false));
@@ -101,6 +92,11 @@ public final class Orbit extends JavaPlugin {
         if (statsManager != null) statsManager.saveAll();
         if (prefixManager != null) prefixManager.saveAll();
         if (topHologramManager != null) topHologramManager.removeAll();
+        if (abilityManager != null) {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                abilityManager.clear(player);
+            }
+        }
         getLogger().info("Orbit Duel Plugin выключен!");
     }
 

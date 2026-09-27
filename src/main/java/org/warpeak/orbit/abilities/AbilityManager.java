@@ -15,8 +15,10 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
+import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
@@ -26,9 +28,9 @@ import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.warpeak.orbit.Orbit;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
@@ -167,7 +169,17 @@ public class AbilityManager {
         if (data == null) return;
 
         if (data.monsterAuraTask != -1) Bukkit.getScheduler().cancelTask(data.monsterAuraTask);
+        if (data.monsterAuraEndTask != -1) Bukkit.getScheduler().cancelTask(data.monsterAuraEndTask);
         if (data.monsterWaveTask != -1) Bukkit.getScheduler().cancelTask(data.monsterWaveTask);
+        if (data.archangelAuraTask != -1) Bukkit.getScheduler().cancelTask(data.archangelAuraTask);
+        if (data.archangelHealTask != -1) Bukkit.getScheduler().cancelTask(data.archangelHealTask);
+        if (data.archangelEndTask != -1) Bukkit.getScheduler().cancelTask(data.archangelEndTask);
+        for (int taskId : data.expandingRingTasks) Bukkit.getScheduler().cancelTask(taskId);
+        data.expandingRingTasks.clear();
+        for (TextDisplay display : data.visualDisplays) {
+            if (display.isValid()) display.remove();
+        }
+        data.visualDisplays.clear();
         if (data.territoryParticleTask != -1) Bukkit.getScheduler().cancelTask(data.territoryParticleTask);
         if (data.territoryEffectTask != -1) Bukkit.getScheduler().cancelTask(data.territoryEffectTask);
         if (data.territoryBoomTask != -1) Bukkit.getScheduler().cancelTask(data.territoryBoomTask);
@@ -252,7 +264,7 @@ public class AbilityManager {
 
     // ==================== Уклонение (ручное, тир3) ====================
 
-    public boolean tryDodge(Player victim, Player attacker, EntityDamageByEntityEvent event) {
+    public boolean tryDodge(Player victim, EntityDamageByEntityEvent event) {
         PlayerAbilityData data = getData(victim);
         if (data == null) return false;
         if (!data.hasAbility(Ability.DODGE)) return false;
@@ -263,92 +275,29 @@ public class AbilityManager {
 
         event.setCancelled(true);
         data.dodgeArmed = false;
-        // FIX (баг #1): кулдаун уже идёт с момента АКТИВАЦИИ (см. activateDodge).
-        // Здесь мы никогда его не укорачиваем — только продлеваем, если хит
-        // пришёл позже, чем через (активация + 5с). Окно вооружения и кулдаун
-        // идут независимо и не сбрасывают друг друга.
         data.dodgeCooldownUntil = Math.max(data.dodgeCooldownUntil, now + 5000);
 
-        performRandomHorizontalTeleport(victim, "t3_dodge");
+        performRandomHorizontalTeleport(victim);
         victim.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§dУклонение сработало!"));
-
-        // Лог: хит потреблён доджем тир3. Несколько таких строк одной жертве
-        // внутри одного 5-секундного кулдауна = сигнатура эксплуатации (баг #1);
-        // после фикса такое невозможно (см. DODGE-T3-REJECT).
-        DebugLog.log(plugin, "DODGE-T3-DODGE",
-                "victim=" + victim.getName() + " attacker=" + attacker.getName()
-                        + " sinceActivateMs=" + (now - data.dodgeActivatedAt)
-                        + " cdLeftMs=" + (data.dodgeCooldownUntil - now));
 
         return true;
     }
 
     // ==================== Ультра Инстинкт: пассивный уворот (тир4) ====================
 
-    /**
-     * Внутренний интервал между уворотами Ультра Инстинктом ОДНОГО игрока.
-     * Защита от "цепочек" уворотов при множественных хитах в одном тике
-     * (например, циркулярная атака): визуальное сходство с неуязвимостью.
-     * Не является кулдауном ульты (120с) — только анти-спам внутри окна.
-     */
-    private static final long ULTRA_INSTINCT_DODGE_INTERNAL_CD_MS = 400L;
-
-    public boolean tryUltraInstinctDodge(Player victim, Player attacker, EntityDamageByEntityEvent event) {
+    public boolean tryUltraInstinctDodge(Player victim, EntityDamageByEntityEvent event) {
         PlayerAbilityData data = getData(victim);
-        if (data == null) return false;
+        if (data == null || !data.ultraInstinctActive) return false;
+        if (random.nextDouble() >= 0.5) return false;
 
-        // ВАЖНО: флаг берётся из данных САМОЙ ЖЕРТВЫ (Map<UUID, PlayerAbilityData>),
-        // ultraInstinctActive соперника на этот метод не влияет (проверка (a)).
-        boolean active = data.ultraInstinctActive;
-        if (!active) return false;
-
-        // Ролл фиксируем ВСЕГДА — он есть в логе даже если уворот отбит
-        // внутренним интервалом (см. ниже).
-        double roll = random.nextDouble();
-        boolean wouldDodge = roll < 0.5;
-
-        long internalCdLeftMs = data.ultraInstinctLastDodgeAt + ULTRA_INSTINCT_DODGE_INTERNAL_CD_MS
-                - System.currentTimeMillis();
-
-        String result;
-        if (internalCdLeftMs > 0) {
-            // Второй и далее хиты в пределах 400мс гарантированно проходят:
-            // цепочка из N уворотов в одном тике невозможна.
-            result = "N/A blockedCdMs=" + internalCdLeftMs;
-        } else {
-            result = wouldDodge ? "true" : "false";
-        }
-
-        // ЛОГ НА КАЖДЫЙ РОЛЛ (требование (b)): жертва, значение ролла,
-        // результат уворота (true/false) и был ли ultraInstinctActive=true
-        // именно в момент хита. Эта строка — единственное доказательство
-        // того, что отмена урона пришлась именно на Ультра Инстинкт.
-        DebugLog.log(plugin, "UI-RNG",
-                "victim=" + victim.getName() + " attacker=" + attacker.getName()
-                        + " active=" + active
-                        + " roll=" + String.format(Locale.ROOT, "%.3f", roll)
-                        + " dodged=" + result);
-
-        if (!wouldDodge || internalCdLeftMs > 0) return false;
-
-        long now = System.currentTimeMillis();
         event.setCancelled(true);
-        data.ultraInstinctLastDodgeAt = now;
-
-        performRandomHorizontalTeleport(victim, "ui_dodge");
+        performRandomHorizontalTeleport(victim);
         victim.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§b§lУльтра Инстинкт: уклонение!"));
         victim.playSound(victim.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.8f);
-
         return true;
     }
 
-    /**
-     * Телепортирует игрока на 1 блок в полностью случайном горизонтальном направлении
-     * (Y не меняется — не вверх и не вниз). Используется и уворотом, и Ультра Инстинктом.
-     *
-     * @param reason для отладочной атрибуции: t3_dodge / ui_dodge
-     */
-    private void performRandomHorizontalTeleport(Player victim, String reason) {
+    private void performRandomHorizontalTeleport(Player victim) {
         Location vLoc = victim.getLocation();
         double angle = random.nextDouble() * 2 * Math.PI;
         double x = Math.cos(angle);
@@ -361,142 +310,6 @@ public class AbilityManager {
         victim.getWorld().spawnParticle(Particle.SMOKE, vLoc.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
         victim.teleport(target);
         victim.getWorld().spawnParticle(Particle.SMOKE, target.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
-
-        // СТАНДАРТНЫЙ паттерн (side-effect баг #2): ЛЮБЫЙ телепорт игрока во
-        // время боя должен снимать неявное окно неуязвимости Paper —
-        // немедленно + каждый тик в течение 3 секунд (см.
-        // clearPostTeleportInvulnWindow). Одноразового next-tick reset
-        // недостаточно: Paper может (пере)выставить окно позже.
-        PlayerAbilityData vData = getData(victim);
-        if (vData != null) {
-            vData.lastDodgeTeleportAt = System.currentTimeMillis();
-        }
-        clearPostTeleportInvulnWindow(victim, reason);
-    }
-
-    /**
-     * Как долго форсируем снятие окна неуязвимости после боевого телепорта (тиков).
-     * 60 тиков = 3 секунды: накрывает верификационное окно 1–3с после swap и
-     * любое "отложенное" повторное выставление окна Paper.
-     */
-    private static final int POST_TELEPORT_INVULN_FORCE_TICKS = 60;
-
-    /**
-     * Стандартный safety-паттерн после ЛЮБОГО Entity#teleport() на игрока в
-     * активном бою (Teleport Swap, Dodge-уворот, Ультра Инстинкт и любые
-     * будущие телепорт-способности).
-     *
-     * Paper/Vanilla неявно выставляет короткое окно неуязвимости
-     * (noDamageTicks > 0) сразу после teleport() — тот же механизм, что
-     * пост-хитная/респаунная иммунитет-задержка. Пока оно стоит, весь
-     * входящий урон глушится без какого-либо нашего кода (событие урона
-     * может вообще не срабатывать). Именно это давало ~2 секунды "бессмертия"
-     * ОБЕИМ игрокам после Teleport Swap (баг #2).
-     *
-     * ВАЖНО (фикс повторной неуязвимости): одноразового reset на следующем
-     * тике НЕДОСТАТОЧНО — Paper может (пере)выставить окно в ЛЮБОЙ
-     * последующий тик (наблюдались повторные выставления и заметно позже,
-     * чем в том же тике). Поэтому:
-     *   1) сбрасываем окно НЕМЕДЛЕННО после teleport();
-     *   2) затем КАЖДЫЙ тик в течение POST_TELEPORT_INVULN_FORCE_TICKS
-     *      принудительно держим noDamageTicks = 0 (и снимаем флаг
-     *      invulnerable, если сервер выставляет его при телепорте).
-     *
-     * Любое реальное сбрасывание логируется строкой TELEPORT-INVULN с фазой
-     * (immediate / tickN) и значением — это прямое доказательство "окна
-     * Paper" с точным тиком, когда оно (пере)выставлялось. Если таких строк
-     * нет вообще — окно не выставляется, и неуязвимость имеет иную причину
-     * (см. UI-RNG / DODGE-T3 / DAMAGE строки).
-     *
-     * Следствие для Ультра Инстинкта: каждый уворот телепортирует игрока и
-     * запускает новый 3-секундный цикл форсинга, поэтому в бою с активным UI
-     * окно неуязвимости не успевает закрепиться, и все НЕ-ододженные (50%)
-     * хиты проходят полностью — "неуязвимость на всё время UI" исключена.
-     *
-     * @param reason для атрибуции: t3_swap / t3_dodge / ui_dodge
-     */
-    private void clearPostTeleportInvulnWindow(Player p, String reason) {
-        // Проход 1: немедленно (окно, выставленное синхронно внутри teleport())
-        forceZeroInvulnState(p, reason, "immediate");
-
-        // Проходы 2..N: каждый тик, пока длится окно форсинга (3 секунды).
-        // Ловит ЛЮБОЕ повторное выставление окна Paper, независимо от того,
-        // в каком тике именно Paper его (пере)выставит.
-        new BukkitRunnable() {
-            private int ticks = 0;
-
-            @Override
-            public void run() {
-                if (!p.isOnline() || ++ticks > POST_TELEPORT_INVULN_FORCE_TICKS) {
-                    this.cancel();
-                    return;
-                }
-                // Состояние ДО сброса — для SWAP-AUDIT (у swap: раз в секунду)
-                boolean isSwap = "t3_swap".equals(reason);
-                int preClear = isSwap ? DebugLog.getNoDamageTicks(plugin, p) : -1;
-                boolean preInvul = isSwap && p.isInvulnerable();
-                forceZeroInvulnState(p, reason, "tick" + ticks);
-                if (isSwap && ticks % 20 == 0) {
-                    String resist = p.hasPotionEffect(PotionEffectType.RESISTANCE)
-                            ? String.valueOf(p.getPotionEffect(PotionEffectType.RESISTANCE).getAmplifier() + 1)
-                            : "none";
-                    // Дистанция до оппонента: если она велика — "бесмертие"
-                    // на самом деле восприятие (игроки далеко/улетели), а не
-                    // блокировка урона.
-                    String dist = "n/a";
-                    try {
-                        org.warpeak.orbit.duel.Duel duel = Orbit.get().getDuelManager().getDuel(p);
-                        if (duel != null) {
-                            Player op = duel.getOpponent(p);
-                            if (op != null && op.isOnline()) {
-                                dist = String.format(Locale.ROOT, "%.1f", p.getLocation().distance(op.getLocation()));
-                            }
-                        }
-                    } catch (Exception ignored) { }
-                    DebugLog.log(plugin, "SWAP-AUDIT",
-                            "victim=" + p.getName() + " tick=" + ticks
-                                    + " health=" + p.getHealth()
-                                    + " distOpponent=" + dist
-                                    + " preClearNoDamageTicks=" + preClear
-                                    + " preClearInvulFlag=" + preInvul
-                                    + " resist=" + resist);
-                }
-            }
-        }.runTaskTimer(plugin, 1L, 1L);
-    }
-
-    /**
-     * Принудительно сбрасывает ИСТОЧНИКИ "боевой неуязвимости" игрока:
-     *   1) noDamageTicks > 0 — неявное окно Paper (после teleport() / после хита);
-     *   2) флаг invulnerable — если сервер выставляет его при телепорте.
-     * Сброс noDamageTicks УЛОВНЫЙ (выполняется ВСЕГДА) и не зависит от
-     * доступности диагностического геттера: если геттер недоступен
-     * (вернёт -1), окно всё равно снимается. Строка TELEPORT-INVULN
-     * пишется, только если реально найдено ненулевое значение.
-     */
-    private void forceZeroInvulnState(Player p, String reason, String phase) {
-        // Диагностическое значение (для лога) — оно НЕ используется как
-        // условие сброса (при таком условии окно Paper могло не сниматься
-        // на рантайме, где геттер не резолвится).
-        int noDamageTicks = DebugLog.getNoDamageTicks(plugin, p);
-        p.setNoDamageTicks(0);
-        if (noDamageTicks > 0) {
-            DebugLog.log(plugin, "TELEPORT-INVULN",
-                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
-                            + " noDamageTicksFound=" + noDamageTicks + " -> cleared");
-        }
-
-        if (p.isInvulnerable()) {
-            p.setInvulnerable(false);
-            DebugLog.log(plugin, "TELEPORT-INVULN",
-                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
-                            + " invulnerableFlag=true -> cleared");
-        }
-
-        // Paper 1.21.2+: окно неуязвимости может храниться в "причинах"
-        // (invulnerable causes), а не в noDamageTicks/invulnerable.
-        // Пробуется через рефлексию — на старых сборках это безобидный no-op.
-        DebugLog.clearInvulnCauses(plugin, p, reason, phase);
     }
 
     // ==================== Возрождение Феникса (тир3, реактивная) ====================
@@ -512,7 +325,6 @@ public class AbilityManager {
         if (data.phoenixUsed) return false;
 
         data.phoenixUsed = true;
-        data.phoenixUsedAt = System.currentTimeMillis();
 
         double max = p.getAttribute(Attribute.MAX_HEALTH).getValue();
         p.setHealth(Math.max(1.0, max / 2.0));
@@ -580,10 +392,6 @@ public class AbilityManager {
             long msLeft = data.dodgeCooldownUntil - now;
             long secondsLeft = (msLeft / 1000) + 1;
             p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cУклонение перезаряжается: " + secondsLeft + "с"));
-            // Лог "отбитого" нажатия: прямое доказательство того, что спам F
-            // не может ни продлить окно вооружения, ни сбросить кулдаун (баг #1).
-            DebugLog.log(plugin, "DODGE-T3-REJECT",
-                    "player=" + p.getName() + " reason=on_cooldown cdMsLeft=" + msLeft);
             return;
         }
 
@@ -603,15 +411,11 @@ public class AbilityManager {
         // истечением окна или срабатыванием уворота не сбрасывается
         // (в tryDodge — только Math.max, т.е. только продление).
         data.dodgeCooldownUntil = now + 5000;
-        data.dodgeActivatedAt = now;
         data.dodgeArmed = true;
         data.dodgeArmedUntil = now + 1000;
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§dУклонение активно 1 сек!"));
         p.playSound(p.getLocation(), Sound.ITEM_TRIDENT_RIPTIDE_1, 0.6f, 1.5f);
-
-        DebugLog.log(plugin, "DODGE-T3-ACTIVATE",
-                "player=" + p.getName() + " cdMs=5000 armedWindowMs=1000");
 
         // Таймер снимает ТОЛЬКО вооружение, если за окно хит не пришёл.
         // Кулдаун этим таском НЕ трогается — он уже идёт с момента активации,
@@ -619,8 +423,6 @@ public class AbilityManager {
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (data.dodgeArmed) {
                 data.dodgeArmed = false;
-                DebugLog.log(plugin, "DODGE-T3-EXPIRE",
-                        "player=" + p.getName() + " armedWindowMs=1000 (no hit in window)");
             }
         }, 20L);
     }
@@ -657,43 +459,18 @@ public class AbilityManager {
 
         data.knockbackWaveCooldownUntil = now + 15000;
 
-        Location center = p.getLocation();
+        Location center = p.getLocation().clone();
         double maxRadius = 3.0;
 
         p.playSound(center, Sound.ENTITY_EVOKER_CAST_SPELL, 1f, 1.2f);
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§fУдарная волна!"));
 
-        new BukkitRunnable() {
-            double radius = 0.3;
-
-            @Override
-            public void run() {
-                if (radius > maxRadius) {
-                    applyKnockbackWaveEffect(p, center, maxRadius);
-                    this.cancel();
-                    return;
-                }
-
-                int step = 0;
-                for (double angle = 0; angle < 360; angle += 15) {
-                    double rad = Math.toRadians(angle);
-                    double x = center.getX() + radius * Math.cos(rad);
-                    double z = center.getZ() + radius * Math.sin(rad);
-                    Location particleLoc = new Location(center.getWorld(), x, center.getY() + 0.1, z);
-
-                    Color color = (step % 2 == 0) ? Color.fromRGB(255, 255, 255) : Color.fromRGB(180, 180, 180);
-                    center.getWorld().spawnParticle(Particle.DUST, particleLoc, 1, 0, 0, 0, 0,
-                            new Particle.DustOptions(color, 1.3f));
-                    step++;
-                }
-
-                radius += 0.5;
-            }
-        }.runTaskTimer(plugin, 0L, 1L);
+        startExpandingRing(p, data, center, maxRadius, "§7●", "§f●",
+                () -> applyKnockbackWaveEffect(p, center, maxRadius));
     }
 
     private void applyKnockbackWaveEffect(Player p, Location center, double radius) {
-        for (Entity entity : p.getWorld().getNearbyEntities(center, radius, radius, radius)) {
+        for (Entity entity : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
             if (!(entity instanceof Player target) || target.equals(p)) continue;
             if (target.getLocation().distance(center) > radius + 0.5) continue;
 
@@ -701,6 +478,8 @@ public class AbilityManager {
             if (direction.lengthSquared() < 0.01) {
                 direction = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
             }
+            target.damage(6.0, p);
+
             direction.normalize().multiply(1.4);
             direction.setY(0.35);
 
@@ -709,7 +488,7 @@ public class AbilityManager {
         }
 
         center.getWorld().spawnParticle(Particle.EXPLOSION, center.clone().add(0, 1, 0), 1);
-        p.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.6f);
+        center.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.6f);
     }
 
     // ==================== Обмен местами (ТИР 3) ====================
@@ -748,35 +527,12 @@ public class AbilityManager {
         p.setVelocity(new Vector());
         target.setVelocity(new Vector());
 
-        // === FIX (баг #2) ===
-        // Bukkit/Paper Entity#teleport() неявно выставляет короткое окно
-        // неуязвимости (noDamageTicks) у ОБОИХ телепортированных игроков —
-        // тот же механизм, что пост-хитная иммунитет-задержка. Одиночного
-        // reset в том же тике НЕДОСТАТОЧНО: Paper иногда выставляет окно
-        // ЧУТЬ ПОЗЖЕ, уже после завершения вызова teleport() в рамках того
-        // же тика. Поэтому снимаем окно ДВОЙНЫМ reset у обоих игроков:
-        // немедленно после teleport() И на следующем серверном тике.
-        // До этого фикса оба игрока были "неуязвимы" ~2 секунды после swap.
-        long swapAt = System.currentTimeMillis();
-        data.lastSwapAt = swapAt;
-        PlayerAbilityData tData = getData(target);
-        if (tData != null) {
-            tData.lastSwapAt = swapAt;
-        }
-        clearPostTeleportInvulnWindow(p, "t3_swap");
-        clearPostTeleportInvulnWindow(target, "t3_swap");
-
         target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20, 0));
 
         p.playSound(p.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
         target.playSound(target.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§bОбмен местами!"));
-
-        DebugLog.log(plugin, "TELEPORT-SWAP",
-                "caster=" + p.getName() + " target=" + target.getName()
-                        + " invulnWindowCleared=immediate+nextTick cdMs=5000"
-                        + " build=" + DebugLog.BUILD);
     }
 
     private Player getTargetPlayer(Player p, double maxDistance) {
@@ -791,7 +547,11 @@ public class AbilityManager {
         return (Player) result.getHitEntity();
     }
 
-    // ==================== ТИР 4: Аура Монстра (чёрно-красное кольцо) ====================
+    // ==================== Аура Монстра и расширяющиеся кольца ====================
+
+    private static final int EXPANDING_RING_DURATION_TICKS = 20;
+    private static final int EXPANDING_RING_POINTS = 48;
+    private static final double EXPANDING_RING_START_RADIUS = 0.35;
 
     private void activateMonsterAura(Player p, PlayerAbilityData data) {
         long now = System.currentTimeMillis();
@@ -807,46 +567,56 @@ public class AbilityManager {
         p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 15 * 20, 1));
         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 15 * 20, 1));
 
-        World w = p.getWorld();
+        World world = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
-        w.spawnParticle(Particle.EXPLOSION, start, 1);
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
+        world.spawnParticle(Particle.EXPLOSION, start, 1);
+        world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.fromRGB(255, 0, 0), 2.0f));
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
+        world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.fromRGB(0, 0, 0), 2.0f));
 
-        int auraTask = new BukkitRunnable() {
+        List<TextDisplay> auraRing = createDisplayRing(p.getLocation(), 1.3, 0.2, 24,
+                "§c●", "§4●", data);
+        data.monsterAuraTask = new BukkitRunnable() {
+            private Location lastLocation = p.getLocation().clone();
+
             @Override
             public void run() {
-                if (!p.isOnline()) {
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    removeDisplayRing(data, auraRing);
                     this.cancel();
                     return;
                 }
-                spawnMonsterAuraParticles(p);
+                Location current = p.getLocation();
+                if (hasMoved(lastLocation, current)) {
+                    updateDisplayRing(auraRing, current, 1.3, 0.2);
+                    lastLocation = current.clone();
+                }
             }
-        }.runTaskTimer(plugin, 0L, 2L).getTaskId();
-        data.monsterAuraTask = auraTask;
+        }.runTaskTimer(plugin, 0L, 1L).getTaskId();
 
-        int waveTask = new BukkitRunnable() {
-            int wave = 0;
+        data.monsterWaveTask = new BukkitRunnable() {
+            private int waves = 0;
 
             @Override
             public void run() {
-                if (!p.isOnline()) {
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
                     this.cancel();
                     return;
                 }
-                wave++;
-                if (wave > 3) {
+                if (++waves > 3) {
                     this.cancel();
                     return;
                 }
-                spawnMonsterWave(p);
+                spawnMonsterWave(p, data);
             }
         }.runTaskTimer(plugin, 100L, 100L).getTaskId();
-        data.monsterWaveTask = waveTask;
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+        data.monsterAuraEndTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (dataMap.get(p.getUniqueId()) != data) {
+                removeDisplayRing(data, auraRing);
+                return;
+            }
             p.removePotionEffect(PotionEffectType.STRENGTH);
             reapplyPassiveEffects(p, data);
             data.monsterAuraActive = false;
@@ -854,32 +624,106 @@ public class AbilityManager {
             if (data.monsterWaveTask != -1) Bukkit.getScheduler().cancelTask(data.monsterWaveTask);
             data.monsterAuraTask = -1;
             data.monsterWaveTask = -1;
-        }, 15 * 20L);
+            data.monsterAuraEndTask = -1;
+            removeDisplayRing(data, auraRing);
+        }, 15 * 20L).getTaskId();
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§4§lАура Монстра активирована!"));
         p.playSound(p.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1f, 1f);
     }
 
-    private void spawnMonsterAuraParticles(Player p) {
-        World world = p.getWorld();
-        Location base = p.getLocation().clone();
-        double bob = Math.sin(System.currentTimeMillis() / 150.0) * 0.1;
-        double rot = (System.currentTimeMillis() % 4000) / 4000.0 * 2 * Math.PI;
-
-        double r = 1.3;
-        int points = 24;
-
+    private List<TextDisplay> createDisplayRing(Location center, double radius, double yOffset, int points,
+                                                 String firstColor, String secondColor,
+                                                 PlayerAbilityData data) {
+        List<TextDisplay> displays = new ArrayList<>(points);
         for (int i = 0; i < points; i++) {
-            double angle = 2 * Math.PI * i / points + rot;
-            double x = Math.cos(angle) * r;
-            double z = Math.sin(angle) * r;
-            Location loc = base.clone().add(x, 0.2 + bob, z);
-
-            Color color = (i % 2 == 0) ? Color.fromRGB(255, 0, 0) : Color.fromRGB(0, 0, 0);
-
-            world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 2.0f));
+            Location point = getRingPoint(center, radius, yOffset, i, points);
+            TextDisplay display = center.getWorld().spawn(point, TextDisplay.class);
+            display.setText((i % 2 == 0) ? firstColor : secondColor);
+            display.setAlignment(TextDisplay.TextAlignment.CENTER);
+            display.setBillboard(Display.Billboard.CENTER);
+            display.setDefaultBackground(false);
+            display.setSeeThrough(true);
+            display.setShadowed(false);
+            display.setGravity(false);
+            display.setPersistent(false);
+            display.setSilent(true);
+            display.setTeleportDuration(1);
+            display.setDisplayWidth(0.5f);
+            display.setDisplayHeight(0.5f);
+            display.setViewRange(1.0f);
+            displays.add(display);
+            data.visualDisplays.add(display);
         }
+        return displays;
+    }
+
+    private void updateDisplayRing(List<TextDisplay> displays, Location center, double radius, double yOffset) {
+        for (int i = 0; i < displays.size(); i++) {
+            TextDisplay display = displays.get(i);
+            if (display.isValid()) {
+                display.teleport(getRingPoint(center, radius, yOffset, i, displays.size()));
+            }
+        }
+    }
+
+    private Location getRingPoint(Location center, double radius, double yOffset, int index, int points) {
+        double angle = 2 * Math.PI * index / points;
+        return center.clone().add(Math.cos(angle) * radius, yOffset, Math.sin(angle) * radius);
+    }
+
+    private boolean hasMoved(Location previous, Location current) {
+        return previous.getWorld() != current.getWorld() || previous.distanceSquared(current) > 1.0E-6;
+    }
+
+    private void removeDisplayRing(PlayerAbilityData data, List<TextDisplay> displays) {
+        for (TextDisplay display : displays) {
+            data.visualDisplays.remove(display);
+            if (display.isValid()) display.remove();
+        }
+        displays.clear();
+    }
+
+    private void startExpandingRing(Player source, PlayerAbilityData data, Location center,
+                                    double maxRadius, String firstColor, String secondColor,
+                                    Runnable onComplete) {
+        Location waveCenter = center.clone();
+        List<TextDisplay> ring = createDisplayRing(waveCenter, EXPANDING_RING_START_RADIUS, 0.1,
+                EXPANDING_RING_POINTS, firstColor, secondColor, data);
+
+        BukkitRunnable animation = new BukkitRunnable() {
+            private int tick = 0;
+
+            @Override
+            public void run() {
+                if (!source.isOnline() || dataMap.get(source.getUniqueId()) != data) {
+                    finish();
+                    return;
+                }
+
+                tick++;
+                double progress = Math.min(1.0, tick / (double) EXPANDING_RING_DURATION_TICKS);
+                double easedProgress = 1.0 - (1.0 - progress) * (1.0 - progress);
+                double radius = EXPANDING_RING_START_RADIUS
+                        + (maxRadius - EXPANDING_RING_START_RADIUS) * easedProgress;
+                updateDisplayRing(ring, waveCenter, radius, 0.1);
+
+                if (tick >= EXPANDING_RING_DURATION_TICKS) {
+                    try {
+                        onComplete.run();
+                    } finally {
+                        finish();
+                    }
+                }
+            }
+
+            private void finish() {
+                removeDisplayRing(data, ring);
+                data.expandingRingTasks.remove(getTaskId());
+                cancel();
+            }
+        };
+        data.expandingRingTasks.add(animation.runTaskTimer(plugin, 1L, 1L).getTaskId());
     }
 
     private void spawnMonsterHitBurst(Player victim) {
@@ -891,39 +735,13 @@ public class AbilityManager {
                 new Particle.DustOptions(Color.fromRGB(0, 0, 0), 1.4f));
     }
 
-    private void spawnMonsterWave(Player p) {
-        Location center = p.getLocation();
+    private void spawnMonsterWave(Player p, PlayerAbilityData data) {
+        Location center = p.getLocation().clone();
         double maxRadius = 5.0;
-        World world = center.getWorld();
-
         p.playSound(center, Sound.ENTITY_WITHER_SHOOT, 1f, 1.2f);
 
-        new BukkitRunnable() {
-            double radius = 0.5;
-
-            @Override
-            public void run() {
-                if (radius > maxRadius) {
-                    applyMonsterWaveDamage(p, center, maxRadius);
-                    this.cancel();
-                    return;
-                }
-
-                int step = 0;
-                for (double angle = 0; angle < 360; angle += 8) {
-                    double rad = Math.toRadians(angle);
-                    double x = center.getX() + radius * Math.cos(rad);
-                    double z = center.getZ() + radius * Math.sin(rad);
-                    Location loc = new Location(world, x, center.getY() + 0.1, z);
-
-                    Color color = (step % 2 == 0) ? Color.fromRGB(255, 0, 0) : Color.fromRGB(0, 0, 0);
-                    world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                            new Particle.DustOptions(color, 1.6f));
-                    step++;
-                }
-                radius += 0.5;
-            }
-        }.runTaskTimer(plugin, 0L, 1L);
+        startExpandingRing(p, data, center, maxRadius, "§4●", "§c●",
+                () -> applyMonsterWaveDamage(p, center, maxRadius));
     }
 
     private void applyMonsterWaveDamage(Player p, Location center, double radius) {
@@ -941,13 +759,13 @@ public class AbilityManager {
 
             target.damage(4.0, p);
 
-            Vector dir = target.getLocation().toVector().subtract(center.toVector());
-            if (dir.lengthSquared() < 0.0001) {
-                dir = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
+            Vector direction = target.getLocation().toVector().subtract(center.toVector());
+            if (direction.lengthSquared() < 0.0001) {
+                direction = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
             }
-            dir.normalize().multiply(1.2);
-            dir.setY(0.3);
-            target.setVelocity(dir);
+            direction.normalize().multiply(1.2);
+            direction.setY(0.3);
+            target.setVelocity(direction);
 
             target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20, 0));
             target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20, 0));
@@ -969,29 +787,38 @@ public class AbilityManager {
         p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, 15 * 20, 1));
         p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 15 * 20, 1));
 
-        World w = p.getWorld();
+        World world = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
-        w.spawnParticle(Particle.FLASH, start, 1);
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
+        world.spawnParticle(Particle.FLASH, start, 1);
+        world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.fromRGB(255, 215, 0), 2.0f));
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
+        world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.WHITE, 2.0f));
 
-        int auraTask = new BukkitRunnable() {
+        List<TextDisplay> auraRing = createDisplayRing(p.getLocation(), 1.2, 0.9, 20,
+                "§6●", "§f●", data);
+        data.archangelAuraTask = new BukkitRunnable() {
+            private Location lastLocation = p.getLocation().clone();
+
             @Override
             public void run() {
-                if (!p.isOnline()) {
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    removeDisplayRing(data, auraRing);
                     this.cancel();
                     return;
                 }
-                spawnArchangelAuraParticles(p);
+                Location current = p.getLocation();
+                if (hasMoved(lastLocation, current)) {
+                    updateDisplayRing(auraRing, current, 1.2, 0.9);
+                    lastLocation = current.clone();
+                }
             }
-        }.runTaskTimer(plugin, 0L, 2L).getTaskId();
+        }.runTaskTimer(plugin, 0L, 1L).getTaskId();
 
-        int healTask = new BukkitRunnable() {
+        data.archangelHealTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!p.isOnline()) {
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
                     this.cancel();
                     return;
                 }
@@ -1008,36 +835,21 @@ public class AbilityManager {
             }
         }.runTaskTimer(plugin, 100L, 100L).getTaskId();
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            p.removePotionEffect(PotionEffectType.RESISTANCE);
-            p.removePotionEffect(PotionEffectType.REGENERATION);
-            Bukkit.getScheduler().cancelTask(auraTask);
-            Bukkit.getScheduler().cancelTask(healTask);
-        }, 15 * 20L);
+        data.archangelEndTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (dataMap.get(p.getUniqueId()) == data) {
+                p.removePotionEffect(PotionEffectType.RESISTANCE);
+                p.removePotionEffect(PotionEffectType.REGENERATION);
+                if (data.archangelAuraTask != -1) Bukkit.getScheduler().cancelTask(data.archangelAuraTask);
+                if (data.archangelHealTask != -1) Bukkit.getScheduler().cancelTask(data.archangelHealTask);
+            }
+            data.archangelAuraTask = -1;
+            data.archangelHealTask = -1;
+            data.archangelEndTask = -1;
+            removeDisplayRing(data, auraRing);
+        }, 15 * 20L).getTaskId();
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§e§lЗащита Архангела активирована!"));
         p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.4f);
-    }
-
-    private void spawnArchangelAuraParticles(Player p) {
-        World world = p.getWorld();
-        Location base = p.getLocation().clone();
-        double rot = (System.currentTimeMillis() % 3500) / 3500.0 * 2 * Math.PI;
-
-        double r = 1.2;
-        int points = 20;
-
-        for (int i = 0; i < points; i++) {
-            double angle = 2 * Math.PI * i / points + rot;
-            double x = Math.cos(angle) * r;
-            double z = Math.sin(angle) * r;
-            Location loc = base.clone().add(x, 0.9, z);
-
-            Color color = (i % 2 == 0) ? Color.fromRGB(255, 215, 0) : Color.fromRGB(255, 255, 255);
-
-            world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 2.0f));
-        }
     }
 
     // ==================== ТИР 4: Ультра Инстинкт (бело-голубая аура) ====================
@@ -1057,7 +869,6 @@ public class AbilityManager {
 
         // Скорость 2 (амплифаер 1)
         p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, (int) ULTRA_INSTINCT_DURATION_TICKS, 1));
-        DebugLog.log(plugin, "UI-ACTIVATE", "player=" + p.getName() + " durationMs=15000 cdMs=120000");
 
         World w = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
@@ -1083,7 +894,6 @@ public class AbilityManager {
             // ДО УМА: если игрок умер/ушёл офлайн (или дуэль завершена и clear()
             // уже снял эффекты) — не применяем passive-эффекты к трупу/оффлайну.
             if (!p.isOnline() || p.isDead()) return;
-            DebugLog.log(plugin, "UI-EXPIRE", "player=" + p.getName() + " durationMs=15000");
             data.ultraInstinctActive = false;
             reapplyPassiveEffects(p, data);
             if (data.ultraInstinctAuraTask != -1) Bukkit.getScheduler().cancelTask(data.ultraInstinctAuraTask);
