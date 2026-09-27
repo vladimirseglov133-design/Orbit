@@ -1,7 +1,6 @@
 package org.warpeak.orbit.abilities;
 
 import org.bukkit.block.BlockState;
-import org.bukkit.entity.TextDisplay;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -52,9 +51,6 @@ public class PlayerAbilityData {
     public int territoryDomeRemoveTask = -1;
     public int ultraInstinctAuraTask = -1;
 
-    // Невзаимодействующие display-объекты колец, которые следуют за игроком
-    // и удаляются при завершении способности/дуэли.
-    public final List<TextDisplay> visualDisplays = new ArrayList<>();
     public final Set<Integer> expandingRingTasks = new HashSet<>();
 
     // Блоки купола домена (для восстановления после исчезновения)

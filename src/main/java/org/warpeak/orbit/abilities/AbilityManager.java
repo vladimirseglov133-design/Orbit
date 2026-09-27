@@ -15,10 +15,8 @@ import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
-import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
-import org.bukkit.entity.TextDisplay;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.inventory.EquipmentSlotGroup;
 import org.bukkit.potion.PotionEffect;
@@ -28,7 +26,6 @@ import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 import org.warpeak.orbit.Orbit;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -176,10 +173,6 @@ public class AbilityManager {
         if (data.archangelEndTask != -1) Bukkit.getScheduler().cancelTask(data.archangelEndTask);
         for (int taskId : data.expandingRingTasks) Bukkit.getScheduler().cancelTask(taskId);
         data.expandingRingTasks.clear();
-        for (TextDisplay display : data.visualDisplays) {
-            if (display.isValid()) display.remove();
-        }
-        data.visualDisplays.clear();
         if (data.territoryParticleTask != -1) Bukkit.getScheduler().cancelTask(data.territoryParticleTask);
         if (data.territoryEffectTask != -1) Bukkit.getScheduler().cancelTask(data.territoryEffectTask);
         if (data.territoryBoomTask != -1) Bukkit.getScheduler().cancelTask(data.territoryBoomTask);
@@ -465,7 +458,7 @@ public class AbilityManager {
         p.playSound(center, Sound.ENTITY_EVOKER_CAST_SPELL, 1f, 1.2f);
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§fУдарная волна!"));
 
-        startExpandingRing(p, data, center, maxRadius, "§7●", "§f●",
+        startExpandingRing(p, data, center, maxRadius, Color.fromRGB(180, 180, 180), Color.WHITE,
                 () -> applyKnockbackWaveEffect(p, center, maxRadius));
     }
 
@@ -550,7 +543,6 @@ public class AbilityManager {
     // ==================== Аура Монстра и расширяющиеся кольца ====================
 
     private static final int EXPANDING_RING_DURATION_TICKS = 20;
-    private static final int EXPANDING_RING_POINTS = 48;
     private static final double EXPANDING_RING_START_RADIUS = 0.35;
 
     private void activateMonsterAura(Player p, PlayerAbilityData data) {
@@ -575,23 +567,14 @@ public class AbilityManager {
         world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.fromRGB(0, 0, 0), 2.0f));
 
-        List<TextDisplay> auraRing = createDisplayRing(p.getLocation(), 1.3, 0.2, 24,
-                "§c●", "§4●", data);
         data.monsterAuraTask = new BukkitRunnable() {
-            private Location lastLocation = p.getLocation().clone();
-
             @Override
             public void run() {
                 if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
-                    removeDisplayRing(data, auraRing);
                     this.cancel();
                     return;
                 }
-                Location current = p.getLocation();
-                if (hasMoved(lastLocation, current)) {
-                    updateDisplayRing(auraRing, current, 1.3, 0.2);
-                    lastLocation = current.clone();
-                }
+                spawnMonsterAuraParticles(p);
             }
         }.runTaskTimer(plugin, 0L, 1L).getTaskId();
 
@@ -613,10 +596,7 @@ public class AbilityManager {
         }.runTaskTimer(plugin, 100L, 100L).getTaskId();
 
         data.monsterAuraEndTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (dataMap.get(p.getUniqueId()) != data) {
-                removeDisplayRing(data, auraRing);
-                return;
-            }
+            if (dataMap.get(p.getUniqueId()) != data) return;
             p.removePotionEffect(PotionEffectType.STRENGTH);
             reapplyPassiveEffects(p, data);
             data.monsterAuraActive = false;
@@ -625,72 +605,50 @@ public class AbilityManager {
             data.monsterAuraTask = -1;
             data.monsterWaveTask = -1;
             data.monsterAuraEndTask = -1;
-            removeDisplayRing(data, auraRing);
         }, 15 * 20L).getTaskId();
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§4§lАура Монстра активирована!"));
         p.playSound(p.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1f, 1f);
     }
 
-    private List<TextDisplay> createDisplayRing(Location center, double radius, double yOffset, int points,
-                                                 String firstColor, String secondColor,
-                                                 PlayerAbilityData data) {
-        List<TextDisplay> displays = new ArrayList<>(points);
+    /**
+     * Small Dust scale shortens vanilla particle lifetime, keeping consecutive
+     * frames close together instead of leaving a long particle trail.
+     */
+    private static final float RING_PARTICLE_SCALE = 0.05f;
+
+    private void spawnParticleRing(Location center, double radius, double yOffset, int points,
+                                   Color firstColor, Color secondColor) {
+        World world = center.getWorld();
+        Particle.DustOptions first = new Particle.DustOptions(firstColor, RING_PARTICLE_SCALE);
+        Particle.DustOptions second = new Particle.DustOptions(secondColor, RING_PARTICLE_SCALE);
+
         for (int i = 0; i < points; i++) {
-            Location point = getRingPoint(center, radius, yOffset, i, points);
-            TextDisplay display = center.getWorld().spawn(point, TextDisplay.class);
-            display.setText((i % 2 == 0) ? firstColor : secondColor);
-            display.setAlignment(TextDisplay.TextAlignment.CENTER);
-            display.setBillboard(Display.Billboard.CENTER);
-            display.setDefaultBackground(false);
-            display.setSeeThrough(true);
-            display.setShadowed(false);
-            display.setGravity(false);
-            display.setPersistent(false);
-            display.setSilent(true);
-            display.setTeleportDuration(1);
-            display.setDisplayWidth(0.5f);
-            display.setDisplayHeight(0.5f);
-            display.setViewRange(1.0f);
-            displays.add(display);
-            data.visualDisplays.add(display);
-        }
-        return displays;
-    }
-
-    private void updateDisplayRing(List<TextDisplay> displays, Location center, double radius, double yOffset) {
-        for (int i = 0; i < displays.size(); i++) {
-            TextDisplay display = displays.get(i);
-            if (display.isValid()) {
-                display.teleport(getRingPoint(center, radius, yOffset, i, displays.size()));
-            }
+            double angle = 2 * Math.PI * i / points;
+            Location point = center.clone().add(
+                    Math.cos(angle) * radius,
+                    yOffset,
+                    Math.sin(angle) * radius
+            );
+            world.spawnParticle(Particle.DUST, point, 1, 0, 0, 0, 0,
+                    (i % 2 == 0) ? first : second);
         }
     }
 
-    private Location getRingPoint(Location center, double radius, double yOffset, int index, int points) {
-        double angle = 2 * Math.PI * index / points;
-        return center.clone().add(Math.cos(angle) * radius, yOffset, Math.sin(angle) * radius);
+    private int getRingPointCount(double radius) {
+        return Math.max(48, (int) Math.ceil(2 * Math.PI * radius / 0.12));
     }
 
-    private boolean hasMoved(Location previous, Location current) {
-        return previous.getWorld() != current.getWorld() || previous.distanceSquared(current) > 1.0E-6;
-    }
-
-    private void removeDisplayRing(PlayerAbilityData data, List<TextDisplay> displays) {
-        for (TextDisplay display : displays) {
-            data.visualDisplays.remove(display);
-            if (display.isValid()) display.remove();
-        }
-        displays.clear();
+    private void spawnMonsterAuraParticles(Player p) {
+        double radius = 1.3;
+        spawnParticleRing(p.getLocation(), radius, 0.2, getRingPointCount(radius),
+                Color.fromRGB(255, 0, 0), Color.fromRGB(80, 0, 0));
     }
 
     private void startExpandingRing(Player source, PlayerAbilityData data, Location center,
-                                    double maxRadius, String firstColor, String secondColor,
+                                    double maxRadius, Color firstColor, Color secondColor,
                                     Runnable onComplete) {
         Location waveCenter = center.clone();
-        List<TextDisplay> ring = createDisplayRing(waveCenter, EXPANDING_RING_START_RADIUS, 0.1,
-                EXPANDING_RING_POINTS, firstColor, secondColor, data);
-
         BukkitRunnable animation = new BukkitRunnable() {
             private int tick = 0;
 
@@ -706,7 +664,7 @@ public class AbilityManager {
                 double easedProgress = 1.0 - (1.0 - progress) * (1.0 - progress);
                 double radius = EXPANDING_RING_START_RADIUS
                         + (maxRadius - EXPANDING_RING_START_RADIUS) * easedProgress;
-                updateDisplayRing(ring, waveCenter, radius, 0.1);
+                spawnParticleRing(waveCenter, radius, 0.1, getRingPointCount(radius), firstColor, secondColor);
 
                 if (tick >= EXPANDING_RING_DURATION_TICKS) {
                     try {
@@ -718,7 +676,6 @@ public class AbilityManager {
             }
 
             private void finish() {
-                removeDisplayRing(data, ring);
                 data.expandingRingTasks.remove(getTaskId());
                 cancel();
             }
@@ -740,7 +697,7 @@ public class AbilityManager {
         double maxRadius = 5.0;
         p.playSound(center, Sound.ENTITY_WITHER_SHOOT, 1f, 1.2f);
 
-        startExpandingRing(p, data, center, maxRadius, "§4●", "§c●",
+        startExpandingRing(p, data, center, maxRadius, Color.fromRGB(80, 0, 0), Color.fromRGB(255, 0, 0),
                 () -> applyMonsterWaveDamage(p, center, maxRadius));
     }
 
@@ -795,23 +752,14 @@ public class AbilityManager {
         world.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
                 new Particle.DustOptions(Color.WHITE, 2.0f));
 
-        List<TextDisplay> auraRing = createDisplayRing(p.getLocation(), 1.2, 0.9, 20,
-                "§6●", "§f●", data);
         data.archangelAuraTask = new BukkitRunnable() {
-            private Location lastLocation = p.getLocation().clone();
-
             @Override
             public void run() {
                 if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
-                    removeDisplayRing(data, auraRing);
                     this.cancel();
                     return;
                 }
-                Location current = p.getLocation();
-                if (hasMoved(lastLocation, current)) {
-                    updateDisplayRing(auraRing, current, 1.2, 0.9);
-                    lastLocation = current.clone();
-                }
+                spawnArchangelAuraParticles(p);
             }
         }.runTaskTimer(plugin, 0L, 1L).getTaskId();
 
@@ -829,9 +777,9 @@ public class AbilityManager {
 
                 Location loc = p.getLocation().add(0, 1.2, 0);
                 p.getWorld().spawnParticle(Particle.DUST, loc, 15, 0.5, 0.6, 0.5, 0,
-                        new Particle.DustOptions(Color.fromRGB(255, 230, 120), 1.5f));
+                        new Particle.DustOptions(Color.fromRGB(255, 230, 120), RING_PARTICLE_SCALE));
                 p.getWorld().spawnParticle(Particle.DUST, loc, 15, 0.5, 0.6, 0.5, 0,
-                        new Particle.DustOptions(Color.WHITE, 1.5f));
+                        new Particle.DustOptions(Color.WHITE, RING_PARTICLE_SCALE));
             }
         }.runTaskTimer(plugin, 100L, 100L).getTaskId();
 
@@ -845,11 +793,16 @@ public class AbilityManager {
             data.archangelAuraTask = -1;
             data.archangelHealTask = -1;
             data.archangelEndTask = -1;
-            removeDisplayRing(data, auraRing);
         }, 15 * 20L).getTaskId();
 
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§e§lЗащита Архангела активирована!"));
         p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.4f);
+    }
+
+    private void spawnArchangelAuraParticles(Player p) {
+        double radius = 1.2;
+        spawnParticleRing(p.getLocation(), radius, 0.9, getRingPointCount(radius),
+                Color.fromRGB(255, 215, 0), Color.WHITE);
     }
 
     // ==================== ТИР 4: Ультра Инстинкт (бело-голубая аура) ====================
