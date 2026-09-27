@@ -612,10 +612,9 @@ public class AbilityManager {
     }
 
     /**
-     * Small Dust scale shortens vanilla particle lifetime, keeping consecutive
-     * frames close together instead of leaving a long particle trail.
+     * Use full-size dust particles so the ring reads as a clear band instead of tiny specks.
      */
-    private static final float RING_PARTICLE_SCALE = 0.35f;
+    private static final float RING_PARTICLE_SCALE = 1.0f;
 
     private void spawnParticleRing(Location center, double radius, double yOffset, int points,
                                    Color firstColor, Color secondColor) {
