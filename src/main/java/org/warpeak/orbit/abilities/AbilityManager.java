@@ -612,13 +612,18 @@ public class AbilityManager {
     }
 
     /**
-     * Use full-size dust particles so the ring reads as a clear band instead of tiny specks.
+     * Small aura particles expire quickly. Expanding waves use a separate,
+     * one-shot set of outward-moving particles instead of repainting rings.
      */
-    private static final float RING_PARTICLE_SCALE = 1.0f;
+    private static final float RING_PARTICLE_SCALE = 0.35f;
+    private static final float EXPANDING_RING_PARTICLE_SCALE = 0.5f;
+    private static final double DUST_PARTICLE_VELOCITY_RETENTION = 0.97;
 
-    private void spawnParticleRing(Location center, double radius, double yOffset, int points,
+    private void spawnParticleRing(Player player, double radius, double yOffset, int points,
                                    Color firstColor, Color secondColor) {
-        World world = center.getWorld();
+        World world = player.getWorld();
+        Location center = player.getLocation();
+        Vector playerVelocity = player.getVelocity();
         Particle.DustOptions first = new Particle.DustOptions(firstColor, RING_PARTICLE_SCALE);
         Particle.DustOptions second = new Particle.DustOptions(secondColor, RING_PARTICLE_SCALE);
 
@@ -629,7 +634,8 @@ public class AbilityManager {
                     yOffset,
                     Math.sin(angle) * radius
             );
-            world.spawnParticle(Particle.DUST, point, 1, 0, 0, 0, 0,
+            world.spawnParticle(Particle.DUST, point, 0,
+                    playerVelocity.getX(), playerVelocity.getY(), playerVelocity.getZ(), 1.0,
                     (i % 2 == 0) ? first : second);
         }
     }
@@ -640,7 +646,7 @@ public class AbilityManager {
 
     private void spawnMonsterAuraParticles(Player p) {
         double radius = 1.3;
-        spawnParticleRing(p.getLocation(), radius, 0.2, getRingPointCount(radius),
+        spawnParticleRing(p, radius, 0.2, getRingPointCount(radius),
                 Color.fromRGB(255, 0, 0), Color.fromRGB(80, 0, 0));
     }
 
@@ -648,38 +654,43 @@ public class AbilityManager {
                                     double maxRadius, Color firstColor, Color secondColor,
                                     Runnable onComplete) {
         Location waveCenter = center.clone();
-        BukkitRunnable animation = new BukkitRunnable() {
-            private int tick = 0;
+        spawnExpandingParticleRing(waveCenter, maxRadius, firstColor, secondColor);
 
+        BukkitRunnable completionTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!source.isOnline() || dataMap.get(source.getUniqueId()) != data) {
-                    finish();
-                    return;
-                }
-
-                tick++;
-                double progress = Math.min(1.0, tick / (double) EXPANDING_RING_DURATION_TICKS);
-                double easedProgress = 1.0 - (1.0 - progress) * (1.0 - progress);
-                double radius = EXPANDING_RING_START_RADIUS
-                        + (maxRadius - EXPANDING_RING_START_RADIUS) * easedProgress;
-                spawnParticleRing(waveCenter, radius, 0.1, getRingPointCount(radius), firstColor, secondColor);
-
-                if (tick >= EXPANDING_RING_DURATION_TICKS) {
-                    try {
-                        onComplete.run();
-                    } finally {
-                        finish();
-                    }
-                }
-            }
-
-            private void finish() {
                 data.expandingRingTasks.remove(getTaskId());
-                cancel();
+                if (!source.isOnline() || dataMap.get(source.getUniqueId()) != data) return;
+                onComplete.run();
             }
         };
-        data.expandingRingTasks.add(animation.runTaskTimer(plugin, 1L, 1L).getTaskId());
+        data.expandingRingTasks.add(
+                completionTask.runTaskLater(plugin, EXPANDING_RING_DURATION_TICKS).getTaskId());
+    }
+
+    private void spawnExpandingParticleRing(Location center, double maxRadius,
+                                           Color firstColor, Color secondColor) {
+        World world = center.getWorld();
+        int points = getRingPointCount(maxRadius);
+        Particle.DustOptions first = new Particle.DustOptions(firstColor, EXPANDING_RING_PARTICLE_SCALE);
+        Particle.DustOptions second = new Particle.DustOptions(secondColor, EXPANDING_RING_PARTICLE_SCALE);
+
+        double retention = DUST_PARTICLE_VELOCITY_RETENTION;
+        double travelFactor = (1.0 - Math.pow(retention, EXPANDING_RING_DURATION_TICKS)) / (1.0 - retention);
+        double particleSpeed = (maxRadius - EXPANDING_RING_START_RADIUS) / travelFactor;
+
+        for (int i = 0; i < points; i++) {
+            double angle = 2 * Math.PI * i / points;
+            double directionX = Math.cos(angle);
+            double directionZ = Math.sin(angle);
+            Location point = center.clone().add(
+                    directionX * EXPANDING_RING_START_RADIUS,
+                    0.1,
+                    directionZ * EXPANDING_RING_START_RADIUS
+            );
+            world.spawnParticle(Particle.DUST, point, 0, directionX, 0, directionZ, particleSpeed,
+                    (i % 2 == 0) ? first : second);
+        }
     }
 
     private void spawnMonsterHitBurst(Player victim) {
@@ -800,7 +811,7 @@ public class AbilityManager {
 
     private void spawnArchangelAuraParticles(Player p) {
         double radius = 1.2;
-        spawnParticleRing(p.getLocation(), radius, 0.9, getRingPointCount(radius),
+        spawnParticleRing(p, radius, 0.9, getRingPointCount(radius),
                 Color.fromRGB(255, 215, 0), Color.WHITE);
     }
 
