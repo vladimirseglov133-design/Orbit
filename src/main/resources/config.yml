@@ -444,9 +444,7 @@ abilities:
   visuals:
     expanding-wave-duration-ticks: 20
     expanding-wave-start-radius: 0.35
-    wave-particle-retention: 0.97
     expanding-wave-y-offset: 0.1
-    wave-dust-scale: 1.0
     aura-dust-scale: 1.0
     aura-velocity-scale: 1.0
     aura-rotation-period-ticks: 80

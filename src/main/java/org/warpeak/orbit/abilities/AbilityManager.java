@@ -589,26 +589,22 @@ public class AbilityManager {
                                            Color firstColor, Color secondColor, int durationTicks) {
         World world = center.getWorld();
         int points = getRingPointCount(maxRadius);
-        float scale = particleScale("abilities.visuals.wave-dust-scale", 1.0f);
-        Particle.DustOptions first = new Particle.DustOptions(firstColor, scale);
-        Particle.DustOptions second = new Particle.DustOptions(secondColor, scale);
-
         double maxStartRadius = Math.max(0.01, maxRadius * 0.5);
         double startRadius = plugin.getSettings().decimal(
                 "abilities.visuals.expanding-wave-start-radius", 0.35, 0.01, maxStartRadius);
-        double retention = plugin.getSettings().decimal(
-                "abilities.visuals.wave-particle-retention", 0.97, 0.5, 0.999);
-        double travelFactor = (1.0 - Math.pow(retention, durationTicks)) / (1.0 - retention);
-        double particleSpeed = (maxRadius - startRadius) / travelFactor;
         double yOffset = plugin.getSettings().decimal("abilities.visuals.expanding-wave-y-offset", 0.1, -2.0, 4.0);
+        // DUST has a randomized lifetime; TRAIL moves every point to the rim over the same duration.
+        int travelTicks = Math.max(1, durationTicks);
 
         for (int i = 0; i < points; i++) {
             double angle = 2 * Math.PI * i / points;
             double directionX = Math.cos(angle);
             double directionZ = Math.sin(angle);
-            Location point = center.clone().add(directionX * startRadius, yOffset, directionZ * startRadius);
-            world.spawnParticle(Particle.DUST, point, 0, directionX, 0, directionZ, particleSpeed,
-                    (i % 2 == 0) ? first : second);
+            Location start = center.clone().add(directionX * startRadius, yOffset, directionZ * startRadius);
+            Location target = center.clone().add(directionX * maxRadius, yOffset, directionZ * maxRadius);
+            Color color = (i % 2 == 0) ? firstColor : secondColor;
+            world.spawnParticle(Particle.TRAIL, start, 0, 0, 0, 0, 0,
+                    new Particle.Trail(target, color, travelTicks));
         }
     }
 
