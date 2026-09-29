@@ -1,6 +1,7 @@
 package org.warpeak.orbit.cases;
 
 import org.bukkit.Material;
+import org.warpeak.orbit.Orbit;
 
 public enum CasePrize {
 
@@ -11,7 +12,6 @@ public enum CasePrize {
     CLEANER("Уборщик", "§2", Material.LIME_SHULKER_BOX, 20),
     WAIFU("Тян", "§d", Material.PINK_SHULKER_BOX, 15),
     DEAD("Мёртвый", "§7§lМёртвый", Material.BLACK_SHULKER_BOX, 5),
-
     HERMIT("Отшельник", "§c", Material.RED_SHULKER_BOX, 20),
     SLAVE("Раб", "§b", Material.LIGHT_BLUE_SHULKER_BOX, 25),
     CLOWN("Клоун", "§aК§cл§aо§cу§aн", Material.LIME_SHULKER_BOX, 10),
@@ -20,32 +20,58 @@ public enum CasePrize {
     MUSHROOM("Гриб", "§f§lГ§c§lр§f§lи§c§lб", Material.WHITE_SHULKER_BOX, 10),
     TERMINATOR("Терминатор", "§4Т§cе§4р§cм§4и§cн§4а§cт§4о§cр", Material.GRAY_SHULKER_BOX, 5);
 
-    private final String rawName;
-    private final String coloredDisplay;
-    private final Material material;
-    private final int weight;
+    private final String defaultRawName;
+    private final String defaultDisplay;
+    private final Material defaultMaterial;
+    private final int defaultWeight;
 
     CasePrize(String rawName, String colorOrGradient, Material material, int weight) {
-        this.rawName = rawName;
-        this.material = material;
-        this.weight = weight;
+        this.defaultRawName = rawName;
+        this.defaultMaterial = material;
+        this.defaultWeight = weight;
 
         long colorCodes = colorOrGradient.chars().filter(c -> c == '§').count();
-        if (colorCodes > 1) {
-            // уже готовый градиент (Шут, Мёртвый, Клоун, Механик, Король, Гриб, Терминатор)
-            this.coloredDisplay = colorOrGradient;
-        } else {
-            this.coloredDisplay = colorOrGradient + rawName;
-        }
+        this.defaultDisplay = colorCodes > 1 ? colorOrGradient : colorOrGradient + rawName;
     }
 
-    public String getRawName() { return rawName; }
-    public String getColoredDisplay() { return coloredDisplay; }
-    public Material getMaterial() { return material; }
-    public int getWeight() { return weight; }
+    private String configPath(String key) {
+        return "case.prizes." + name() + "." + key;
+    }
 
-    /** Финальный формат префикса, который увидят все в чате/над головой */
+    public String getRawName() {
+        Orbit plugin = Orbit.get();
+        return plugin == null || plugin.getSettings() == null
+                ? defaultRawName
+                : plugin.getSettings().text(configPath("raw-name"), defaultRawName);
+    }
+
+    public String getColoredDisplay() {
+        Orbit plugin = Orbit.get();
+        return plugin == null || plugin.getSettings() == null
+                ? defaultDisplay
+                : plugin.getSettings().text(configPath("display-name"), defaultDisplay);
+    }
+
+    public Material getMaterial() {
+        Orbit plugin = Orbit.get();
+        return plugin == null || plugin.getSettings() == null
+                ? defaultMaterial
+                : plugin.getSettings().material(configPath("material"), defaultMaterial);
+    }
+
+    public int getWeight() {
+        Orbit plugin = Orbit.get();
+        return plugin == null || plugin.getSettings() == null
+                ? defaultWeight
+                : plugin.getSettings().integer(configPath("weight"), defaultWeight, 0, 1_000_000);
+    }
+
+    /** Final prefix format displayed in chat and above the player. */
     public String getLuckPermsPrefix() {
-        return "§7[" + coloredDisplay + "§7] ";
+        Orbit plugin = Orbit.get();
+        String format = plugin == null || plugin.getSettings() == null
+                ? "§7[{prize}§7] "
+                : plugin.getSettings().text("case.prefix-format", "&7[{prize}&7] ");
+        return format.replace("{prize}", getColoredDisplay());
     }
 }

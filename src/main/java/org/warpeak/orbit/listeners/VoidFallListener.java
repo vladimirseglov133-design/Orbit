@@ -12,24 +12,24 @@ import org.warpeak.orbit.duel.DuelManager;
 public class VoidFallListener implements Listener {
 
     private final DuelManager duelManager;
-    private final int limitY;
 
-    public VoidFallListener(DuelManager duelManager, int limitY) {
+    public VoidFallListener(DuelManager duelManager) {
         this.duelManager = duelManager;
-        this.limitY = limitY;
     }
 
     @EventHandler
     public void onMove(PlayerMoveEvent event) {
         Player p = event.getPlayer();
         if (!duelManager.isInDuel(p)) return;
-        if (p.getLocation().getY() >= limitY) return;
+        if (p.getLocation().getY() >= Orbit.get().getSettings().integer("arena.void-y-limit", 50)) return;
 
         boolean revived = Orbit.get().getAbilityManager().tryPhoenixRebirth(p);
         if (revived) {
             Duel duel = duelManager.getDuel(p);
             if (duel != null) {
-                Location safe = duel.getArenaLocation().clone().add(0, 20, 0);
+                int reviveOffset = Orbit.get().getSettings().integer(
+                        "abilities.phoenix-rebirth.void-revive-offset", 20, 1, 128);
+                Location safe = duel.getArenaLocation().clone().add(0, reviveOffset, 0);
                 p.teleport(safe);
             }
             return;

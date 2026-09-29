@@ -31,7 +31,8 @@ public class ArenaManager {
     private World duelsWorld;
 
     private int nextOffset = 0;
-    private final int ARENA_SIZE = 200;
+    private int arenaSpacing = 200;
+    private int arenaBaseY = 100;
     private final Deque<Integer> freeSlots = new ArrayDeque<>();
 
     private Clipboard cachedSchematic;
@@ -41,26 +42,55 @@ public class ArenaManager {
     }
 
     public void setupWorld() {
-        WorldCreator creator = new WorldCreator("duels_world");
+        arenaSpacing = plugin.getSettings().integer("arena.spacing", 200, 64, 4096);
+        arenaBaseY = plugin.getSettings().integer("arena.base-y", 100, -64, 320);
+        String worldName = plugin.getConfig().getString("arena.world", "duels_world");
+        WorldCreator creator = new WorldCreator(worldName);
         creator.generator(new VoidGenerator());
         creator.environment(World.Environment.NORMAL);
-        duelsWorld = Bukkit.getWorld("duels_world");
+        duelsWorld = Bukkit.getWorld(worldName);
         if (duelsWorld == null) {
             duelsWorld = creator.createWorld();
         }
+        if (duelsWorld == null) {
+            plugin.getLogger().severe("Не удалось создать мир арен '" + worldName + "'.");
+            return;
+        }
 
-        duelsWorld.setTime(6000);
-        duelsWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
-        duelsWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
-        // Мгновенный респавн без экрана смерти - важно для быстрого возврата в лобби
-        duelsWorld.setGameRule(GameRule.DO_IMMEDIATE_RESPAWN, true);
+        duelsWorld.setTime(plugin.getSettings().longValue("arena.world-time", 6000L, 0L, 24_000L));
+        duelsWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE,
+                plugin.getSettings().bool("arena.game-rules.daylight-cycle", false));
+        duelsWorld.setGameRule(GameRule.DO_WEATHER_CYCLE,
+                plugin.getSettings().bool("arena.game-rules.weather-cycle", false));
+        duelsWorld.setGameRule(GameRule.DO_IMMEDIATE_RESPAWN,
+                plugin.getSettings().bool("arena.game-rules.immediate-respawn", true));
 
         loadSchematic();
     }
 
+    /** Applies arena layout/game-rule settings that can be refreshed without recreating the world. */
+    public void reloadRuntimeSettings(boolean reloadSchematic) {
+        arenaSpacing = plugin.getSettings().integer("arena.spacing", 200, 64, 4096);
+        arenaBaseY = plugin.getSettings().integer("arena.base-y", 100, -64, 320);
+        if (duelsWorld != null) {
+            duelsWorld.setTime(plugin.getSettings().longValue("arena.world-time", 6000L, 0L, 24_000L));
+            duelsWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE,
+                    plugin.getSettings().bool("arena.game-rules.daylight-cycle", false));
+            duelsWorld.setGameRule(GameRule.DO_WEATHER_CYCLE,
+                    plugin.getSettings().bool("arena.game-rules.weather-cycle", false));
+            duelsWorld.setGameRule(GameRule.DO_IMMEDIATE_RESPAWN,
+                    plugin.getSettings().bool("arena.game-rules.immediate-respawn", true));
+        }
+        if (reloadSchematic) {
+            cachedSchematic = null;
+            loadSchematic();
+        }
+    }
+
     private void loadSchematic() {
         try {
-            File file = new File(plugin.getDataFolder(), "schematics/arena.schem");
+            File file = new File(plugin.getDataFolder(), plugin.getConfig().getString(
+                    "arena.schematic", "schematics/arena.schem"));
             if (!file.exists()) {
                 plugin.getLogger().warning("Файл схематики арены не найден: " + file.getPath());
                 return;
@@ -77,14 +107,15 @@ public class ArenaManager {
     }
 
     public Location claimArena() {
+        if (duelsWorld == null) throw new IllegalStateException("Мир арен не загружен.");
         int offset;
         if (!freeSlots.isEmpty()) {
             offset = freeSlots.poll();
         } else {
             offset = nextOffset;
-            nextOffset += ARENA_SIZE;
+            nextOffset += arenaSpacing;
         }
-        return new Location(duelsWorld, offset, 100, 0);
+        return new Location(duelsWorld, offset, arenaBaseY, 0);
     }
 
     public void releaseArena(Location loc) {
@@ -92,7 +123,7 @@ public class ArenaManager {
     }
 
     private void preloadChunks(Location origin) {
-        int radius = 3; // с запасом, покрывает арены до ~48 блоков в ширину
+        int radius = plugin.getSettings().integer("arena.chunk-preload-radius", 3, 0, 16);
         int centerChunkX = origin.getBlockX() >> 4;
         int centerChunkZ = origin.getBlockZ() >> 4;
 

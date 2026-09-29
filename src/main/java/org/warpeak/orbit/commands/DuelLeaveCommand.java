@@ -21,7 +21,8 @@ public class DuelLeaveCommand implements CommandExecutor {
         if (!(sender instanceof Player p)) return true;
 
         if (!duelManager.isInDuel(p)) {
-            p.sendMessage(ChatColor.RED + "Ты не в дуэли.");
+            p.sendMessage(org.warpeak.orbit.Orbit.get().getSettings().text(
+                    "messages.duel.not-in-duel", "&cТы не в дуэли."));
             return true;
         }
 

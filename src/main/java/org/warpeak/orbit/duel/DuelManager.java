@@ -3,7 +3,6 @@ package org.warpeak.orbit.duel;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -34,61 +33,69 @@ public class DuelManager {
 
     public void sendRequest(Player sender, Player target) {
         if (isInDuel(sender) || isInDuel(target)) {
-            sender.sendMessage(ChatColor.RED + "Игрок уже занят.");
+            sender.sendMessage(plugin.getSettings().text("messages.duel.player-busy", "&cИгрок уже занят."));
             return;
         }
 
         if (isLocked(sender) || isLocked(target)) {
-            sender.sendMessage(ChatColor.RED + "Подожди, дуэль уже запускается.");
+            sender.sendMessage(plugin.getSettings().text("messages.duel.starting", "&cПодожди, дуэль уже запускается."));
             return;
         }
 
         if (pendingRequests.containsKey(sender.getUniqueId())) {
-            sender.sendMessage(ChatColor.RED + "Ты уже отправил запрос, дождись ответа.");
+            sender.sendMessage(plugin.getSettings().text(
+                    "messages.duel.request-already-sent", "&cТы уже отправил запрос, дождись ответа."));
             return;
         }
 
         UUID reverseRequester = getRequesterFor(sender);
         if (reverseRequester != null && reverseRequester.equals(target.getUniqueId())) {
             pendingRequests.remove(reverseRequester);
-            sender.sendMessage(ChatColor.GREEN + "У вас встречные запросы - дуэль начинается сразу!");
-            target.sendMessage(ChatColor.GREEN + "У вас встречные запросы - дуэль начинается сразу!");
+            String mutualMessage = plugin.getSettings().text(
+                    "messages.duel.mutual-requests", "&aУ вас встречные запросы — дуэль начинается сразу!");
+            sender.sendMessage(mutualMessage);
+            target.sendMessage(mutualMessage);
             startDuel(sender, target);
             return;
         }
 
-        pendingRequests.put(sender.getUniqueId(), target.getUniqueId());
+        UUID requestTargetId = target.getUniqueId();
+        pendingRequests.put(sender.getUniqueId(), requestTargetId);
 
-        sender.sendMessage(ChatColor.GREEN + "Запрос отправлен игроку " + target.getName());
+        sender.sendMessage(plugin.getSettings().text("messages.duel.request-sent", "&aЗапрос отправлен игроку {player}")
+                .replace("{player}", target.getName()));
 
-        TextComponent msg = new TextComponent(ChatColor.YELLOW + sender.getName() + " вызывает тебя на дуэль! ");
-        TextComponent accept = new TextComponent(ChatColor.GREEN + "[Принять]");
+        TextComponent msg = new TextComponent(plugin.getSettings().text(
+                "messages.duel.request-title", "&e{player} вызывает тебя на дуэль! ")
+                .replace("{player}", sender.getName()));
+        TextComponent accept = new TextComponent(plugin.getSettings().text("messages.duel.accept-button", "&a[Принять]"));
         accept.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/duelaccept"));
-        TextComponent decline = new TextComponent(ChatColor.RED + " [Отклонить]");
+        TextComponent decline = new TextComponent(plugin.getSettings().text("messages.duel.decline-button", "&c [Отклонить]"));
         decline.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/dueldecline"));
 
         msg.addExtra(accept);
         msg.addExtra(decline);
         target.spigot().sendMessage(msg);
 
+        int timeoutSeconds = plugin.getSettings().integer("duel.request-timeout-seconds", 30, 1, 3600);
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (pendingRequests.remove(sender.getUniqueId()) != null) {
-                sender.sendMessage(ChatColor.RED + "Запрос дуэли истёк.");
+            if (pendingRequests.remove(sender.getUniqueId(), requestTargetId)) {
+                sender.sendMessage(plugin.getSettings().text("messages.duel.request-expired", "&cЗапрос дуэли истёк."));
             }
-        }, 20L * 30);
+        }, 20L * timeoutSeconds);
     }
 
     public synchronized void accept(Player target) {
         UUID requesterId = getRequesterFor(target);
         if (requesterId == null) {
-            target.sendMessage(ChatColor.RED + "Нет активных запросов.");
+            target.sendMessage(plugin.getSettings().text("messages.duel.no-pending-request", "&cНет активных запросов."));
             return;
         }
 
         Player requester = Bukkit.getPlayer(requesterId);
         if (requester == null) {
             pendingRequests.remove(requesterId);
-            target.sendMessage(ChatColor.RED + "Игрок больше не в сети.");
+            target.sendMessage(plugin.getSettings().text("messages.duel.requester-offline", "&cИгрок больше не в сети."));
             return;
         }
 
@@ -96,12 +103,12 @@ public class DuelManager {
             pendingRequests.remove(requesterId);
             purgeAllRequestsInvolving(requester.getUniqueId());
             purgeAllRequestsInvolving(target.getUniqueId());
-            target.sendMessage(ChatColor.RED + "Дуэль уже началась, запрос отменён.");
+            target.sendMessage(plugin.getSettings().text("messages.duel.request-cancelled", "&cДуэль уже началась, запрос отменён."));
             return;
         }
 
         if (isLocked(requester) || isLocked(target)) {
-            target.sendMessage(ChatColor.RED + "Дуэль уже запускается, подожди секунду.");
+            target.sendMessage(plugin.getSettings().text("messages.duel.duel-starting", "&cДуэль уже запускается, подожди секунду."));
             return;
         }
 
@@ -118,8 +125,10 @@ public class DuelManager {
 
         pendingRequests.remove(requesterId);
         Player requester = Bukkit.getPlayer(requesterId);
-        if (requester != null) requester.sendMessage(ChatColor.RED + target.getName() + " отклонил дуэль.");
-        target.sendMessage(ChatColor.RED + "Дуэль отклонена.");
+        if (requester != null) requester.sendMessage(plugin.getSettings().text(
+                "messages.duel.request-declined-by-target", "&c{player} отклонил дуэль.")
+                .replace("{player}", target.getName()));
+        target.sendMessage(plugin.getSettings().text("messages.duel.request-declined", "&cДуэль отклонена."));
     }
 
     private UUID getRequesterFor(Player target) {

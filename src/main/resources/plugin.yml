@@ -1,10 +1,14 @@
 name: Orbit
-version: '1.0'
+version: '1.1'
 main: org.warpeak.orbit.Orbit
 api-version: '1.21'
 softdepend: [WorldEdit, FastAsyncWorldEdit, LuckPerms]
 
 commands:
+  orbit:
+    description: Управление настройками Orbit
+    usage: /orbit reload
+    permission: orbit.admin.config
   duelaccept:
     description: Принять дуэль
   dueldecline:
@@ -30,10 +34,17 @@ commands:
     description: Удалить голограмму топа
     usage: /removetophologram <kills|coins>
   purgetopholograms:
-    description: Удалить ВСЕ TextDisplay-сущности в радиусе вокруг игрока и пересоздать актуальные голограммы
+    description: Удалить TextDisplay-голограммы в радиусе вокруг игрока
     usage: /purgetopholograms [радиус_в_блоках]
     permission: orbit.admin
+
 permissions:
+  orbit.admin:
+    description: Полный доступ к административным командам Orbit
+    default: op
+  orbit.admin.config:
+    description: Перезагрузка конфигурации Orbit
+    default: op
   orbit.admin.coins:
     description: Доступ к командам выдачи/снятия монет
     default: op

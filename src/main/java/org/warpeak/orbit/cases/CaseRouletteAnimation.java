@@ -17,15 +17,8 @@ import java.util.*;
 
 public class CaseRouletteAnimation {
 
-    // ==== Настройки внешнего вида ====
-    private static final double RADIUS = 1.5;
-    private static final double CENTER_HEIGHT = -0.2;
-    private static final double FRONT_OFFSET = 0.0;
-    private static final int TOTAL_TICKS = 200;
-    private static final int EXTRA_SPINS = 5;
-
-    // Сколько призов показываем на колесе за один раз (не все 14, а случайная выборка)
-    private static final int WHEEL_SIZE = 7;
+    private record AnimationSettings(double radius, double centerHeight, double frontOffset,
+                                     int totalTicks, int extraSpins, int wheelSize, int cleanupTicks) { }
 
     private static final Random random = new Random();
     private static final Queue<AnimationRequest> queue = new LinkedList<>();
@@ -49,7 +42,7 @@ public class CaseRouletteAnimation {
     }
 
     /** Выбирает WHEEL_SIZE случайных призов, гарантированно включая победителя. */
-    private static List<CasePrize> pickWheelPrizes(CasePrize winner) {
+    private static List<CasePrize> pickWheelPrizes(CasePrize winner, int wheelSize) {
         List<CasePrize> all = new ArrayList<>(Arrays.asList(CasePrize.values()));
         all.remove(winner);
         Collections.shuffle(all, random);
@@ -57,7 +50,7 @@ public class CaseRouletteAnimation {
         List<CasePrize> selected = new ArrayList<>();
         selected.add(winner);
 
-        int need = Math.min(WHEEL_SIZE - 1, all.size());
+        int need = Math.min(wheelSize - 1, all.size());
         for (int i = 0; i < need; i++) {
             selected.add(all.get(i));
         }
@@ -70,6 +63,16 @@ public class CaseRouletteAnimation {
         Player player = req.player();
         Location chestLoc = req.chestLoc();
         CasePrize winner = req.winner();
+        Orbit orbit = Orbit.get();
+        AnimationSettings settings = new AnimationSettings(
+                orbit.getSettings().decimal("case.animation.radius", 1.5, 0.25, 10.0),
+                orbit.getSettings().decimal("case.animation.center-height", -0.2, -10.0, 10.0),
+                orbit.getSettings().decimal("case.animation.front-offset", 0.0, -5.0, 5.0),
+                orbit.getSettings().integer("case.animation.duration-ticks", 200, 20, 1200),
+                orbit.getSettings().integer("case.animation.extra-spins", 5, 0, 50),
+                orbit.getSettings().integer("case.animation.wheel-size", 7, 2, CasePrize.values().length),
+                orbit.getSettings().integer("case.animation.cleanup-delay-ticks", 60, 0, 1200)
+        );
 
         Block block = chestLoc.getBlock();
         BlockFace facing = BlockFace.NORTH;
@@ -84,11 +87,11 @@ public class CaseRouletteAnimation {
 
         Vector right = new Vector(-front.getZ(), 0, front.getX());
 
-        Location wheelCenter = chestLoc.getBlock().getLocation().add(0.5, CENTER_HEIGHT, 0.5)
-                .add(front.clone().multiply(FRONT_OFFSET));
+        Location wheelCenter = chestLoc.getBlock().getLocation().add(0.5, settings.centerHeight(), 0.5)
+                .add(front.clone().multiply(settings.frontOffset()));
 
         // Формируем случайную выборку призов именно для этого открытия
-        List<CasePrize> wheelPrizes = pickWheelPrizes(winner);
+        List<CasePrize> wheelPrizes = pickWheelPrizes(winner, settings.wheelSize());
         int n = wheelPrizes.size();
         double slice = 360.0 / n;
 
@@ -98,37 +101,43 @@ public class CaseRouletteAnimation {
         }
 
         double winnerBaseAngle = winnerIndex * slice;
-        double totalOffset = EXTRA_SPINS * 360.0 + ((360.0 - winnerBaseAngle) % 360.0);
+        double totalOffset = settings.extraSpins() * 360.0 + ((360.0 - winnerBaseAngle) % 360.0);
 
         List<OrbitSlot> slots = new ArrayList<>();
         for (int i = 0; i < n; i++) {
             double baseAngle = i * slice;
-            slots.add(new OrbitSlot(wheelPrizes.get(i), baseAngle, wheelCenter, right));
+            slots.add(new OrbitSlot(wheelPrizes.get(i), baseAngle, wheelCenter, right, settings.radius()));
         }
 
-        Location pointerLoc = wheelCenter.clone().add(0, RADIUS + 0.5, 0);
-        TextDisplay pointer = spawnPointer(pointerLoc, "§e▼ §fПРИЗ §e▼");
+        Location pointerLoc = wheelCenter.clone().add(0, settings.radius() + 0.5, 0);
+        TextDisplay pointer = spawnPointer(pointerLoc, orbit.getSettings().text(
+                "case.animation.pointer-text", "&e▼ &fПРИЗ &e▼"));
 
         Orbit.get().getCaseManager().markOpening(player, true);
-        player.playSound(wheelCenter, Sound.BLOCK_CHEST_OPEN, 1f, 1f);
-        player.sendTitle("", "§7Крутим барабан...", 5, 20, 5);
+        player.playSound(wheelCenter, orbit.getSettings().sound(
+                "case.animation.open-sound", Sound.BLOCK_CHEST_OPEN),
+                (float) orbit.getSettings().decimal("case.animation.open-sound-volume", 1.0, 0.0, 2.0),
+                (float) orbit.getSettings().decimal("case.animation.open-sound-pitch", 1.0, 0.5, 2.0));
+        player.sendTitle("", orbit.getSettings().text(
+                "case.animation.spin-subtitle", "&7Крутим барабан..."), 5, 20, 5);
 
-        runTick(player, chestLoc, wheelCenter, slots, pointer, 0, totalOffset, winner);
+        runTick(player, chestLoc, wheelCenter, slots, pointer, 0, totalOffset, winner, settings);
     }
 
     private static void runTick(Player player, Location chestLoc, Location wheelCenter,
                                 List<OrbitSlot> slots, TextDisplay pointer,
-                                int tick, double totalOffset, CasePrize winner) {
+                                int tick, double totalOffset, CasePrize winner,
+                                AnimationSettings settings) {
 
         boolean playerLost = !player.isOnline() || player.getLocation().getWorld() != chestLoc.getWorld()
                 || player.getLocation().distanceSquared(chestLoc) > 400;
 
         if (playerLost) {
-            finishAnimation(slots, pointer, player, winner, true, wheelCenter);
+            finishAnimation(slots, pointer, player, winner, true, wheelCenter, settings);
             return;
         }
 
-        double t = (double) tick / TOTAL_TICKS;
+        double t = (double) tick / settings.totalTicks();
         double eased = 1 - Math.pow(1 - t, 3);
         double offset = totalOffset * eased;
 
@@ -136,30 +145,49 @@ public class CaseRouletteAnimation {
             slot.updatePosition(offset);
         }
 
-        if (tick % 4 == 0) {
-            float pitch = Math.min(2.0f, 1.0f + (float) t * 1.2f);
-            player.playSound(chestLoc, Sound.UI_BUTTON_CLICK, 0.5f, pitch);
+        int tickInterval = Orbit.get().getSettings().integer("case.animation.tick-interval-ticks", 4, 1, 1200);
+        if (tick % tickInterval == 0) {
+            double startPitch = Orbit.get().getSettings().decimal("case.animation.tick-start-pitch", 1.0, 0.5, 2.0);
+            double endPitch = Orbit.get().getSettings().decimal("case.animation.tick-end-pitch", 2.0, 0.5, 2.0);
+            float pitch = (float) (startPitch + (endPitch - startPitch) * t);
+            float volume = (float) Orbit.get().getSettings().decimal("case.animation.tick-volume", 0.5, 0.0, 2.0);
+            player.playSound(chestLoc, Orbit.get().getSettings().sound(
+                    "case.animation.tick-sound", Sound.UI_BUTTON_CLICK), volume, pitch);
         }
 
-        if (tick >= TOTAL_TICKS) {
-            finishAnimation(slots, pointer, player, winner, false, wheelCenter);
+        if (tick >= settings.totalTicks()) {
+            finishAnimation(slots, pointer, player, winner, false, wheelCenter, settings);
             return;
         }
 
         Bukkit.getScheduler().runTaskLater(Orbit.get(), () ->
-                runTick(player, chestLoc, wheelCenter, slots, pointer, tick + 1, totalOffset, winner), 1L);
+                runTick(player, chestLoc, wheelCenter, slots, pointer, tick + 1, totalOffset, winner, settings), 1L);
     }
 
     private static void finishAnimation(List<OrbitSlot> slots, TextDisplay pointer, Player player,
-                                        CasePrize winner, boolean cancelled, Location wheelCenter) {
+                                        CasePrize winner, boolean cancelled, Location wheelCenter,
+                                        AnimationSettings settings) {
 
         if (!cancelled) {
-            Location winnerLoc = wheelCenter.clone().add(0, RADIUS, 0);
+            Location winnerLoc = wheelCenter.clone().add(0, settings.radius(), 0);
+            Orbit orbit = Orbit.get();
 
-            player.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, winnerLoc, 40, 0.3, 0.4, 0.3, 0.3);
-            player.playSound(winnerLoc, Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.3f);
-            player.sendTitle("§6Поздравляем!", "§fВы получили: " + winner.getColoredDisplay(), 5, 60, 15);
-            player.sendMessage("§7[§6Кейс§7] §fВы получили приз: " + winner.getColoredDisplay());
+            Particle winParticle = orbit.getSettings().particle("case.animation.win-particle", Particle.TOTEM_OF_UNDYING);
+            int winParticleCount = orbit.getSettings().integer("case.animation.win-particle-count", 40, 0, 2000);
+            player.getWorld().spawnParticle(winParticle, winnerLoc, winParticleCount, 0.3, 0.4, 0.3, 0.3);
+            player.playSound(winnerLoc, orbit.getSettings().sound(
+                    "case.animation.win-sound", Sound.ENTITY_PLAYER_LEVELUP),
+                    (float) orbit.getSettings().decimal("case.animation.win-sound-volume", 1.0, 0.0, 2.0),
+                    (float) orbit.getSettings().decimal("case.animation.win-sound-pitch", 1.3, 0.5, 2.0));
+            player.sendTitle(orbit.getSettings().text("case.animation.win-title", "&6Поздравляем!"),
+                    orbit.getSettings().text("case.animation.win-subtitle", "&fВы получили: {prize}")
+                            .replace("{prize}", winner.getColoredDisplay()),
+                    orbit.getSettings().integer("case.animation.title-fade-in-ticks", 5, 0, 1200),
+                    orbit.getSettings().integer("case.animation.title-stay-ticks", 60, 0, 1200),
+                    orbit.getSettings().integer("case.animation.title-fade-out-ticks", 15, 0, 1200));
+            player.sendMessage(orbit.getSettings().text("messages.case.reward-received",
+                    "&7[&6Кейс&7] &fВы получили приз: {prize}")
+                    .replace("{prize}", winner.getColoredDisplay()));
 
             for (OrbitSlot slot : slots) {
                 if (slot.prize == winner) {
@@ -170,7 +198,7 @@ public class CaseRouletteAnimation {
 
         Orbit.get().getCaseManager().markOpening(player, false);
 
-        long cleanupDelay = cancelled ? 0L : 60L;
+        long cleanupDelay = cancelled ? 0L : settings.cleanupTicks();
         Bukkit.getScheduler().runTaskLater(Orbit.get(), () -> {
             for (OrbitSlot slot : slots) slot.remove();
             pointer.remove();
@@ -195,14 +223,16 @@ public class CaseRouletteAnimation {
         final double baseAngle;
         final Location center;
         final Vector right;
+        final double radius;
         final ArmorStand armorStand;
         final TextDisplay textDisplay;
 
-        OrbitSlot(CasePrize prize, double baseAngle, Location center, Vector right) {
+        OrbitSlot(CasePrize prize, double baseAngle, Location center, Vector right, double radius) {
             this.prize = prize;
             this.baseAngle = baseAngle;
             this.center = center;
             this.right = right;
+            this.radius = radius;
 
             Location initial = computePosition(baseAngle);
             this.armorStand = spawnArmorStand(initial, prize);
@@ -218,8 +248,8 @@ public class CaseRouletteAnimation {
 
         Location computePosition(double angleDeg) {
             double rad = Math.toRadians(angleDeg);
-            double horizontal = Math.sin(rad) * RADIUS;
-            double vertical = Math.cos(rad) * RADIUS;
+            double horizontal = Math.sin(rad) * radius;
+            double vertical = Math.cos(rad) * radius;
 
             return center.clone()
                     .add(right.clone().multiply(horizontal))
