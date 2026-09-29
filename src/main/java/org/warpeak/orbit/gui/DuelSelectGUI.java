@@ -1,31 +1,39 @@
 package org.warpeak.orbit.gui;
 
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
+import org.warpeak.orbit.Orbit;
 
-public class DuelSelectGUI {
+public final class DuelSelectGUI {
 
-    public static final String TITLE = ChatColor.DARK_RED + "Выбери соперника";
+    private DuelSelectGUI() { }
+
+    public static String getTitle() {
+        return Orbit.get().getSettings().text("duel-gui.title", "&4Выбери соперника");
+    }
+
+    private static int getSize() {
+        int configured = Orbit.get().getSettings().integer("duel-gui.size", 54, 9, 54);
+        return Math.max(9, Math.min(54, ((configured + 8) / 9) * 9));
+    }
 
     public static Inventory build(Player viewer) {
-        Inventory inv = Bukkit.createInventory(null, 54, TITLE);
-
+        Orbit plugin = Orbit.get();
+        Inventory inventory = Bukkit.createInventory(null, getSize(), getTitle());
         for (Player target : Bukkit.getOnlinePlayers()) {
             if (target.equals(viewer)) continue;
-
             ItemStack head = new ItemStack(Material.PLAYER_HEAD);
-            SkullMeta meta = (SkullMeta) head.getItemMeta();
+            if (!(head.getItemMeta() instanceof SkullMeta meta)) continue;
             meta.setOwningPlayer(target);
-            meta.setDisplayName(ChatColor.YELLOW + target.getName());
+            meta.setDisplayName(plugin.getSettings().text("duel-gui.player-name", "&e{player}")
+                    .replace("{player}", target.getName()));
             head.setItemMeta(meta);
-
-            inv.addItem(head);
+            inventory.addItem(head);
         }
-        return inv;
+        return inventory;
     }
 }

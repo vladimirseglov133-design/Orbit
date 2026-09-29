@@ -15,10 +15,10 @@ public class CaseGUIListener implements Listener {
 
     @EventHandler
     public void onClick(InventoryClickEvent event) {
-        if (!event.getView().getTitle().equals(CaseGUI.TITLE)) return;
+        if (!event.getView().getTitle().equals(CaseGUI.getTitle())) return;
 
         event.setCancelled(true);
-        if (event.getRawSlot() != CaseGUI.BUY_SLOT) return;
+        if (event.getRawSlot() != CaseGUI.getBuySlot()) return;
         if (!(event.getWhoClicked() instanceof Player player)) return;
 
         handlePurchase(player);
@@ -26,7 +26,7 @@ public class CaseGUIListener implements Listener {
 
     @EventHandler
     public void onDrag(InventoryDragEvent event) {
-        if (event.getView().getTitle().equals(CaseGUI.TITLE)) {
+        if (event.getView().getTitle().equals(CaseGUI.getTitle())) {
             event.setCancelled(true);
         }
     }
@@ -36,19 +36,23 @@ public class CaseGUIListener implements Listener {
         long coins = Orbit.get().getStatsManager().getStats(player).coins;
 
         if (coins < price) {
-            player.sendMessage("§cНедостаточно монет! Нужно: " + price);
+            player.sendMessage(Orbit.get().getSettings().text(
+                    "messages.case.not-enough-coins", "&cНедостаточно монет! Нужно: {price}")
+                    .replace("{price}", Long.toString(price)));
             player.closeInventory();
             return;
         }
 
         if (Orbit.get().getCaseManager().isOpening(player)) {
-            player.sendMessage("§cДождитесь окончания текущей анимации!");
+            player.sendMessage(Orbit.get().getSettings().text(
+                    "messages.case.animation-running", "&cДождитесь окончания текущей анимации!"));
             player.closeInventory();
             return;
         }
 
         if (!Orbit.get().getCaseManager().tryCharge(player)) {
-            player.sendMessage("§cОшибка списания монет.");
+            player.sendMessage(Orbit.get().getSettings().text(
+                    "messages.case.charge-failed", "&cОшибка списания монет."));
             return;
         }
 

@@ -16,16 +16,26 @@ public class CaseHologram {
     public static void spawnOrUpdate(Location chestLoc, long price) {
         Location base = chestLoc.clone().add(0.5, 1.3, 0.5);
 
+        removeAt(chestLoc);
+
+        Orbit plugin = Orbit.get();
+        spawnLine(base.clone().add(0, 0.5, 0), plugin.getSettings().text(
+                "case.hologram.title", "&6&lКейс Префиксов"));
+        spawnLine(base.clone().add(0, 0.25, 0), plugin.getSettings().text(
+                "case.hologram.price-line", "&eЦена: &f{price} монет").replace("{price}", Long.toString(price)));
+        spawnLine(base.clone(), plugin.getSettings().text(
+                "case.hologram.click-line", "&7ПКМ чтобы открыть"));
+    }
+
+    public static void removeAt(Location chestLoc) {
+        if (chestLoc == null || chestLoc.getWorld() == null) return;
+        Location base = chestLoc.clone().add(0.5, 1.3, 0.5);
         Collection<Entity> nearby = base.getWorld().getNearbyEntities(base, 1.5, 2.0, 1.5);
-        for (Entity e : nearby) {
-            if (e.getType() == EntityType.ARMOR_STAND && e.hasMetadata(META_KEY)) {
-                e.remove();
+        for (Entity entity : nearby) {
+            if (entity.getType() == EntityType.ARMOR_STAND && entity.hasMetadata(META_KEY)) {
+                entity.remove();
             }
         }
-
-        spawnLine(base.clone().add(0, 0.5, 0), "§6§lКейс Префиксов");
-        spawnLine(base.clone().add(0, 0.25, 0), "§eЦена: §f" + price + " монет");
-        spawnLine(base.clone(), "§7ПКМ чтобы открыть");
     }
 
     private static void spawnLine(Location loc, String text) {

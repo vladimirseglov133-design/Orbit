@@ -1,5 +1,7 @@
 package org.warpeak.orbit.abilities;
 
+import org.warpeak.orbit.Orbit;
+
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -43,7 +45,13 @@ public enum Ability {
     }
 
     public AbilityTier getTier() { return tier; }
-    public String getDisplayName() { return displayName; }
+
+    public String getDisplayName() {
+        Orbit plugin = Orbit.get();
+        return plugin == null || plugin.getSettings() == null
+                ? displayName
+                : plugin.getSettings().text("abilities.names." + name(), displayName);
+    }
 
     public static List<Ability> byTier(AbilityTier tier) {
         return Arrays.stream(values()).filter(a -> a.tier == tier).collect(Collectors.toList());

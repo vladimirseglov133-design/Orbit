@@ -26,8 +26,9 @@ public class TopHologram {
     // Без этого при каждом рестарте создавались бы дубликаты голограмм.
     private static final NamespacedKey HOLO_KEY = new NamespacedKey(Orbit.get(), "orbit_top_holo");
 
-    private static final double LINE_SPACING = 0.28;
-    private static final int TOP_SIZE = 10;
+    private static final List<String> DEFAULT_PLACE_COLORS = List.of(
+            "&6", "&7", "&c", "&f", "&f", "&f", "&f", "&f", "&f", "&f"
+    );
 
     private final Type type;
     private final Location baseLocation;
@@ -45,11 +46,12 @@ public class TopHologram {
         List<StatsManager.TopEntry> top = fetchTop();
         List<String> textLines = buildLines(top);
 
-        double startY = baseLocation.getY() + (textLines.size() - 1) * LINE_SPACING;
+        double lineSpacing = Orbit.get().getSettings().decimal("holograms.line-spacing", 0.28, 0.05, 1.0);
+        double startY = baseLocation.getY() + (textLines.size() - 1) * lineSpacing;
 
         for (int i = 0; i < textLines.size(); i++) {
             Location lineLoc = baseLocation.clone();
-            lineLoc.setY(startY - i * LINE_SPACING);
+            lineLoc.setY(startY - i * lineSpacing);
             lines.add(spawnLine(lineLoc, textLines.get(i)));
         }
 
@@ -87,30 +89,40 @@ public class TopHologram {
     }
 
     private List<StatsManager.TopEntry> fetchTop() {
+        int topSize = Orbit.get().getSettings().integer("holograms.top-size", 10, 1, 50);
         return type == Type.KILLS
-                ? Orbit.get().getStatsManager().getTopByKills(TOP_SIZE)
-                : Orbit.get().getStatsManager().getTopByCoins(TOP_SIZE);
+                ? Orbit.get().getStatsManager().getTopByKills(topSize)
+                : Orbit.get().getStatsManager().getTopByCoins(topSize);
     }
 
     private List<String> buildLines(List<StatsManager.TopEntry> top) {
+        Orbit plugin = Orbit.get();
         List<String> result = new ArrayList<>();
 
-        String title = type == Type.KILLS
-                ? "§c§lТОП ПО ПОБЕДАМ"
-                : "§6§lТОП ПО БАЛАНСУ";
-        result.add(title);
-        result.add("§7");
+        String titlePath = type == Type.KILLS ? "holograms.titles.kills" : "holograms.titles.coins";
+        String defaultTitle = type == Type.KILLS ? "&c&lТОП ПО ПОБЕДАМ" : "&6&lТОП ПО БАЛАНСУ";
+        result.add(plugin.getSettings().text(titlePath, defaultTitle));
+        result.add(plugin.getSettings().text("holograms.separator-line", "&7"));
 
-        String[] placeColors = {"§6", "§7", "§c", "§f", "§f", "§f", "§f", "§f", "§f", "§f"};
-        String unit = type == Type.KILLS ? " побед" : " монет";
+        List<String> placeColors = plugin.getSettings().textList("holograms.place-colors", DEFAULT_PLACE_COLORS);
+        String unit = plugin.getSettings().text(
+                type == Type.KILLS ? "holograms.units.kills" : "holograms.units.coins",
+                type == Type.KILLS ? " побед" : " монет");
 
         if (top.isEmpty()) {
-            result.add("§7Пока никто не в топе");
+            result.add(plugin.getSettings().text("holograms.empty-line", "&7Пока никто не в топе"));
         } else {
+            String format = plugin.getSettings().text("holograms.entry-format",
+                    "{color}#{place} &f{name} &7- &e{value}{unit}");
             for (int i = 0; i < top.size(); i++) {
                 StatsManager.TopEntry entry = top.get(i);
-                String color = i < placeColors.length ? placeColors[i] : "§f";
-                result.add(color + "#" + (i + 1) + " §f" + entry.name + " §7- §e" + entry.value + unit);
+                String color = i < placeColors.size() ? placeColors.get(i) : "&f";
+                result.add(format
+                        .replace("{color}", color)
+                        .replace("{place}", Integer.toString(i + 1))
+                        .replace("{name}", entry.name)
+                        .replace("{value}", Long.toString(entry.value))
+                        .replace("{unit}", unit));
             }
         }
 
@@ -121,10 +133,12 @@ public class TopHologram {
         return loc.getWorld().spawn(loc, TextDisplay.class, td -> {
             td.setBillboard(Display.Billboard.CENTER);
             td.setAlignment(TextDisplay.TextAlignment.CENTER);
-            td.setSeeThrough(false);
-            td.setShadowed(true);
-            td.setDefaultBackground(true);
-            td.setBackgroundColor(Color.fromARGB(90, 0, 0, 0));
+            td.setSeeThrough(Orbit.get().getSettings().bool("holograms.see-through", false));
+            td.setShadowed(Orbit.get().getSettings().bool("holograms.shadowed", true));
+            td.setDefaultBackground(Orbit.get().getSettings().bool("holograms.default-background", true));
+            Color background = Orbit.get().getSettings().color("holograms.background-color", Color.BLACK);
+            int alpha = Orbit.get().getSettings().integer("holograms.background-alpha", 90, 0, 255);
+            td.setBackgroundColor(Color.fromARGB(alpha, background.getRed(), background.getGreen(), background.getBlue()));
             td.setText(text);
             td.setPersistent(true);
             td.getPersistentDataContainer().set(HOLO_KEY, PersistentDataType.STRING, type.name());

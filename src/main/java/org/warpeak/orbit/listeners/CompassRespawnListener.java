@@ -20,7 +20,7 @@ public class CompassRespawnListener implements Listener {
         Bukkit.getScheduler().runTaskLater(Orbit.get(), () -> {
             if (!p.isOnline()) return;
 
-            if (!p.getInventory().contains(Material.COMPASS)) {
+            if (!ItemsUtil.hasCompassMenuItem(p)) {
                 p.getInventory().addItem(ItemsUtil.createCompass());
             }
 

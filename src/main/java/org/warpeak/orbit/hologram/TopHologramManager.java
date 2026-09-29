@@ -17,6 +17,7 @@ public class TopHologramManager {
 
     private final Orbit plugin;
     private final Map<TopHologram.Type, TopHologram> holograms = new EnumMap<>(TopHologram.Type.class);
+    private int autoUpdateTaskId = -1;
 
     public TopHologramManager(Orbit plugin) {
         this.plugin = plugin;
@@ -27,6 +28,14 @@ public class TopHologramManager {
         loadOne(TopHologram.Type.COINS, "top-holograms.coins");
     }
 
+    public void reloadFromConfig() {
+        if (autoUpdateTaskId != -1) Bukkit.getScheduler().cancelTask(autoUpdateTaskId);
+        autoUpdateTaskId = -1;
+        removeAll();
+        loadFromConfig();
+        startAutoUpdate();
+    }
+
     private void loadOne(TopHologram.Type type, String path) {
         FileConfiguration cfg = plugin.getConfig();
         if (!cfg.contains(path + ".world")) {
@@ -34,7 +43,7 @@ public class TopHologramManager {
             return;
         }
 
-        String worldName = cfg.getString(path + ".world");
+        String worldName = cfg.getString(path + ".world", "");
         World world = Bukkit.getWorld(worldName);
         if (world == null) {
             plugin.getLogger().warning("[TopHologram] Мир '" + worldName + "' не найден для голограммы " + type + ".");
@@ -49,7 +58,9 @@ public class TopHologramManager {
 
         // Принудительно прогружаем чанк, иначе spawn() может создать сущность,
         // которая тут же будет выгружена сервером
-        loc.getChunk().setForceLoaded(true);
+        if (plugin.getSettings().bool("holograms.force-load-chunks", true)) {
+            loc.getChunk().setForceLoaded(true);
+        }
 
         setHologram(type, loc, false);
         plugin.getLogger().info("[TopHologram] Голограмма " + type + " загружена в " + worldName
@@ -60,7 +71,9 @@ public class TopHologramManager {
         TopHologram existing = holograms.remove(type);
         if (existing != null) existing.remove();
 
-        loc.getChunk().setForceLoaded(true);
+        if (plugin.getSettings().bool("holograms.force-load-chunks", true)) {
+            loc.getChunk().setForceLoaded(true);
+        }
 
         TopHologram holo = new TopHologram(type, loc);
         holo.spawn();
@@ -153,7 +166,13 @@ public class TopHologramManager {
     }
 
     public void startAutoUpdate() {
-        // Первое обновление - сразу через 5 секунд после старта, далее каждые 15 секунд
-        Bukkit.getScheduler().runTaskTimer(plugin, this::updateAll, 20L * 5, 20L * 15);
+        if (autoUpdateTaskId != -1) Bukkit.getScheduler().cancelTask(autoUpdateTaskId);
+        autoUpdateTaskId = -1;
+        if (!plugin.getSettings().bool("holograms.auto-update", true)) return;
+
+        int initialDelay = plugin.getSettings().integer("holograms.initial-update-delay-seconds", 5, 1, 3600);
+        int interval = plugin.getSettings().integer("holograms.update-interval-seconds", 15, 1, 3600);
+        autoUpdateTaskId = Bukkit.getScheduler().runTaskTimer(
+                plugin, this::updateAll, initialDelay * 20L, interval * 20L).getTaskId();
     }
 }

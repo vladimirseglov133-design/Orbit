@@ -48,6 +48,22 @@ public class AbilityManager {
         this.KNOCKBACK_MOD_KEY = new NamespacedKey(plugin, "orbit_knockback");
     }
 
+    private long cooldownMillis(String path, int defaultSeconds) {
+        return plugin.getSettings().secondsToMillis(path, defaultSeconds);
+    }
+
+    private int durationTicks(String path, int defaultSeconds) {
+        return plugin.getSettings().secondsToTicks(path, defaultSeconds);
+    }
+
+    private int intervalTicks(String path, int defaultTicks) {
+        return plugin.getSettings().integer(path, defaultTicks, 1, 12_000);
+    }
+
+    private float particleScale(String path, float defaultScale) {
+        return plugin.getSettings().decimalFloat(path, defaultScale, 1.0f, 4.0f);
+    }
+
     public PlayerAbilityData getData(Player p) {
         return dataMap.get(p.getUniqueId());
     }
@@ -64,25 +80,47 @@ public class AbilityManager {
             if (p.isOnline() && dataMap.get(p.getUniqueId()) == data) {
                 grantTier(p, data, AbilityTier.TIER2);
             }
-        }, 20L * 60);
+        }, durationTicks("abilities.tier-unlocks.tier2-seconds", 60));
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (p.isOnline() && dataMap.get(p.getUniqueId()) == data) {
                 grantTier(p, data, AbilityTier.TIER3);
             }
-        }, 20L * 120);
+        }, durationTicks("abilities.tier-unlocks.tier3-seconds", 120));
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (p.isOnline() && dataMap.get(p.getUniqueId()) == data) {
                 grantTier(p, data, AbilityTier.TIER4);
             }
-        }, 20L * 180);
+        }, durationTicks("abilities.tier-unlocks.tier4-seconds", 180));
     }
 
     private void grantTier(Player p, PlayerAbilityData data, AbilityTier tier) {
         List<Ability> pool = Ability.byTier(tier);
-        if (pool.isEmpty()) return;
-        Ability chosen = pool.get(random.nextInt(pool.size()));
+        int totalWeight = 0;
+        for (Ability ability : pool) {
+            totalWeight += plugin.getSettings().integer(
+                    "abilities.weights." + tier.name().toLowerCase(Locale.ROOT) + "." + ability.name(),
+                    1, 0, 1_000_000);
+        }
+        if (totalWeight <= 0) {
+            plugin.getLogger().warning("Все веса способностей для " + tier + " равны 0; тир пропущен.");
+            return;
+        }
+
+        int roll = random.nextInt(totalWeight);
+        Ability chosen = null;
+        int cursor = 0;
+        for (Ability ability : pool) {
+            cursor += plugin.getSettings().integer(
+                    "abilities.weights." + tier.name().toLowerCase(Locale.ROOT) + "." + ability.name(),
+                    1, 0, 1_000_000);
+            if (roll < cursor) {
+                chosen = ability;
+                break;
+            }
+        }
+        if (chosen == null) return;
 
         switch (tier) {
             case TIER1 -> data.tier1 = chosen;
@@ -98,13 +136,18 @@ public class AbilityManager {
     private void applyPassiveEffect(Player p, Ability ability) {
         switch (ability) {
             case HEART_BOOST -> {
-                addMaxHealth(p, 4.0);
-                p.setHealth(Math.min(p.getHealth() + 4.0, p.getAttribute(Attribute.MAX_HEALTH).getValue()));
+                double extraHealth = plugin.getSettings().decimal("abilities.passives.heart-boost.extra-health", 4.0, 0.0, 40.0);
+                addMaxHealth(p, extraHealth);
+                p.setHealth(Math.min(p.getHealth() + extraHealth, p.getAttribute(Attribute.MAX_HEALTH).getValue()));
             }
-            case JUMP_BOOST -> p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, Integer.MAX_VALUE, 1, true, false, false));
-            case SPEED_BOOST -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE, 0, true, false, false));
-            case ANTI_KNOCKBACK -> setKnockbackResistance(p, 1.0);
-            case SUPER_SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE, 1, true, false, false));
+            case JUMP_BOOST -> p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.jump-boost.amplifier", 1, 0, 255), true, false, false));
+            case SPEED_BOOST -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.speed-boost.amplifier", 0, 0, 255), true, false, false));
+            case ANTI_KNOCKBACK -> setKnockbackResistance(p,
+                    plugin.getSettings().decimal("abilities.passives.anti-knockback.resistance", 1.0, 0.0, 1.0));
+            case SUPER_SPEED -> p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.super-speed.amplifier", 1, 0, 255), true, false, false));
             default -> { }
         }
     }
@@ -118,13 +161,16 @@ public class AbilityManager {
         if (!p.isOnline()) return;
 
         if (data.hasAbility(Ability.JUMP_BOOST)) {
-            p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, Integer.MAX_VALUE, 1, true, false, false));
+            p.addPotionEffect(new PotionEffect(PotionEffectType.JUMP_BOOST, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.jump-boost.amplifier", 1, 0, 255), true, false, false));
         }
 
         if (data.hasAbility(Ability.SUPER_SPEED)) {
-            p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE, 1, true, false, false));
+            p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.super-speed.amplifier", 1, 0, 255), true, false, false));
         } else if (data.hasAbility(Ability.SPEED_BOOST)) {
-            p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE, 0, true, false, false));
+            p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, Integer.MAX_VALUE,
+                    plugin.getSettings().integer("abilities.passives.speed-boost.amplifier", 0, 0, 255), true, false, false));
         } else {
             p.removePotionEffect(PotionEffectType.SPEED);
         }
@@ -152,12 +198,18 @@ public class AbilityManager {
     }
 
     private void announce(Player p, Ability ability) {
-        String text = "§7Новая способность: " + ability.getDisplayName();
+        String text = plugin.getSettings().text("messages.new-ability", "&7Новая способность: {ability}")
+                .replace("{ability}", ability.getDisplayName());
         p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(text));
-        p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.5f);
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.announcement-sound", Sound.ENTITY_PLAYER_LEVELUP), 1f, 1.5f);
 
-        Bukkit.getScheduler().runTaskLater(plugin, () ->
-                p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(text)), 40L);
+        int repeatDelay = plugin.getSettings().integer("abilities.announcement-repeat-delay-seconds", 2, 0, 60);
+        if (repeatDelay > 0) {
+            Bukkit.getScheduler().runTaskLater(plugin, () -> {
+                if (p.isOnline()) p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(text));
+            }, repeatDelay * 20L);
+        }
     }
 
     // ==================== Очистка после дуэли ====================
@@ -167,7 +219,13 @@ public class AbilityManager {
         if (data == null) return;
 
         if (data.monsterAuraTask != -1) Bukkit.getScheduler().cancelTask(data.monsterAuraTask);
+        if (data.monsterAuraEndTask != -1) Bukkit.getScheduler().cancelTask(data.monsterAuraEndTask);
         if (data.monsterWaveTask != -1) Bukkit.getScheduler().cancelTask(data.monsterWaveTask);
+        if (data.archangelAuraTask != -1) Bukkit.getScheduler().cancelTask(data.archangelAuraTask);
+        if (data.archangelHealTask != -1) Bukkit.getScheduler().cancelTask(data.archangelHealTask);
+        if (data.archangelEndTask != -1) Bukkit.getScheduler().cancelTask(data.archangelEndTask);
+        for (int taskId : data.expandingRingTasks) Bukkit.getScheduler().cancelTask(taskId);
+        data.expandingRingTasks.clear();
         if (data.territoryParticleTask != -1) Bukkit.getScheduler().cancelTask(data.territoryParticleTask);
         if (data.territoryEffectTask != -1) Bukkit.getScheduler().cancelTask(data.territoryEffectTask);
         if (data.territoryBoomTask != -1) Bukkit.getScheduler().cancelTask(data.territoryBoomTask);
@@ -201,13 +259,14 @@ public class AbilityManager {
         double bonusDamage = 0;
 
         if (atkData.hasAbility(Ability.DAMAGE_BOOST)) {
-            bonusDamage += 1.0;
+            bonusDamage += plugin.getSettings().decimal("abilities.passives.damage-boost.bonus-damage", 1.0, 0.0, 40.0);
         }
 
         if (atkData.hasAbility(Ability.BERSERK)) {
             double max = attacker.getAttribute(Attribute.MAX_HEALTH).getValue();
             double missingRatio = 1 - (attacker.getHealth() / max);
-            bonusDamage += missingRatio * 4.0;
+            bonusDamage += missingRatio * plugin.getSettings().decimal(
+                    "abilities.passives.berserk.max-bonus-damage", 4.0, 0.0, 40.0);
         }
 
         if (bonusDamage > 0) {
@@ -216,287 +275,102 @@ public class AbilityManager {
 
         if (atkData.hasAbility(Ability.HUNGER_DRAIN)) {
             atkData.hitCounterTier1++;
-            if (atkData.hitCounterTier1 % 3 == 0) {
-                victim.setFoodLevel(Math.max(0, victim.getFoodLevel() - 1));
-                attacker.setFoodLevel(Math.min(20, attacker.getFoodLevel() + 1));
+            int hits = plugin.getSettings().integer("abilities.passives.hunger-drain.hits-per-trigger", 3, 1, 100);
+            if (atkData.hitCounterTier1 % hits == 0) {
+                int food = plugin.getSettings().integer("abilities.passives.hunger-drain.food-per-trigger", 1, 0, 20);
+                victim.setFoodLevel(Math.max(0, victim.getFoodLevel() - food));
+                attacker.setFoodLevel(Math.min(20, attacker.getFoodLevel() + food));
             }
         }
 
         if (atkData.hasAbility(Ability.HEALTH_DRAIN)) {
             atkData.hitCounterTier2++;
-            if (atkData.hitCounterTier2 % 3 == 0) {
+            int hits = plugin.getSettings().integer("abilities.passives.health-drain.hits-per-trigger", 3, 1, 100);
+            if (atkData.hitCounterTier2 % hits == 0) {
                 double max = attacker.getAttribute(Attribute.MAX_HEALTH).getValue();
-                double healAmount = 2.0;
+                double healAmount = plugin.getSettings().decimal("abilities.passives.health-drain.heal-amount", 2.0, 0.0, 40.0);
                 attacker.setHealth(Math.min(max, attacker.getHealth() + healAmount));
-                attacker.getWorld().spawnParticle(Particle.HEART, attacker.getLocation().add(0, 1.5, 0), 5, 0.2, 0.2, 0.2, 0);
+                int particleCount = plugin.getSettings().integer("abilities.passives.health-drain.particle-count", 5, 0, 100);
+                attacker.getWorld().spawnParticle(Particle.HEART,
+                        attacker.getLocation().add(0, 1.5, 0), particleCount, 0.2, 0.2, 0.2, 0);
             }
         }
 
         if (atkData.hasAbility(Ability.POISON_TOUCH)) {
-            victim.addPotionEffect(new PotionEffect(PotionEffectType.POISON, 3 * 20, 0));
+            victim.addPotionEffect(new PotionEffect(PotionEffectType.POISON,
+                    durationTicks("abilities.passives.poison-touch.duration-seconds", 3),
+                    plugin.getSettings().integer("abilities.passives.poison-touch.amplifier", 0, 0, 255)));
         }
 
         if (atkData.hasAbility(Ability.STUN_HITS)) {
             atkData.hitCounterTier3++;
-            if (atkData.hitCounterTier3 % 5 == 0) {
-                victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 2 * 20, 0));
-                victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 2 * 20, 1));
+            int hits = plugin.getSettings().integer("abilities.passives.stun-hits.hits-per-trigger", 5, 1, 100);
+            if (atkData.hitCounterTier3 % hits == 0) {
+                int duration = durationTicks("abilities.passives.stun-hits.duration-seconds", 2);
+                victim.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, duration,
+                        plugin.getSettings().integer("abilities.passives.stun-hits.blindness-amplifier", 0, 0, 255)));
+                victim.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, duration,
+                        plugin.getSettings().integer("abilities.passives.stun-hits.slowness-amplifier", 1, 0, 255)));
             }
         }
 
         if (atkData.monsterAuraActive) {
-            victim.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 2 * 20, 1));
+            victim.addPotionEffect(new PotionEffect(PotionEffectType.WITHER,
+                    durationTicks("abilities.monster-aura.hit-wither-duration-seconds", 2),
+                    plugin.getSettings().integer("abilities.monster-aura.hit-wither-amplifier", 1, 0, 255)));
             spawnMonsterHitBurst(victim);
         }
     }
 
     // ==================== Уклонение (ручное, тир3) ====================
 
-    public boolean tryDodge(Player victim, Player attacker, EntityDamageByEntityEvent event) {
+    public boolean tryDodge(Player victim, EntityDamageByEntityEvent event) {
         PlayerAbilityData data = getData(victim);
-        if (data == null) return false;
-        if (!data.hasAbility(Ability.DODGE)) return false;
-        if (!data.dodgeArmed) return false;
-        if (System.currentTimeMillis() > data.dodgeArmedUntil) return false;
+        if (data == null || !data.hasAbility(Ability.DODGE)) return false;
+        if (!data.dodgeArmed || System.currentTimeMillis() > data.dodgeArmedUntil) return false;
 
         long now = System.currentTimeMillis();
-
         event.setCancelled(true);
         data.dodgeArmed = false;
-        // FIX (баг #1): кулдаун уже идёт с момента АКТИВАЦИИ (см. activateDodge).
-        // Здесь мы никогда его не укорачиваем — только продлеваем, если хит
-        // пришёл позже, чем через (активация + 5с). Окно вооружения и кулдаун
-        // идут независимо и не сбрасывают друг друга.
-        data.dodgeCooldownUntil = Math.max(data.dodgeCooldownUntil, now + 5000);
+        data.dodgeCooldownUntil = Math.max(data.dodgeCooldownUntil,
+                now + plugin.getSettings().secondsToMillis("abilities.dodge.cooldown-seconds", 5));
 
-        performRandomHorizontalTeleport(victim, "t3_dodge");
-        victim.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§dУклонение сработало!"));
-
-        // Лог: хит потреблён доджем тир3. Несколько таких строк одной жертве
-        // внутри одного 5-секундного кулдауна = сигнатура эксплуатации (баг #1);
-        // после фикса такое невозможно (см. DODGE-T3-REJECT).
-        DebugLog.log(plugin, "DODGE-T3-DODGE",
-                "victim=" + victim.getName() + " attacker=" + attacker.getName()
-                        + " sinceActivateMs=" + (now - data.dodgeActivatedAt)
-                        + " cdLeftMs=" + (data.dodgeCooldownUntil - now));
-
+        performRandomHorizontalTeleport(victim);
+        victim.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                new TextComponent(plugin.getSettings().text("abilities.dodge.success-message", "&dУклонение сработало!")));
         return true;
     }
 
     // ==================== Ультра Инстинкт: пассивный уворот (тир4) ====================
 
-    /**
-     * Внутренний интервал между уворотами Ультра Инстинктом ОДНОГО игрока.
-     * Защита от "цепочек" уворотов при множественных хитах в одном тике
-     * (например, циркулярная атака): визуальное сходство с неуязвимостью.
-     * Не является кулдауном ульты (120с) — только анти-спам внутри окна.
-     */
-    private static final long ULTRA_INSTINCT_DODGE_INTERNAL_CD_MS = 400L;
-
-    public boolean tryUltraInstinctDodge(Player victim, Player attacker, EntityDamageByEntityEvent event) {
+    public boolean tryUltraInstinctDodge(Player victim, EntityDamageByEntityEvent event) {
         PlayerAbilityData data = getData(victim);
-        if (data == null) return false;
+        if (data == null || !data.ultraInstinctActive) return false;
+        if (random.nextDouble() >= plugin.getSettings().decimal(
+                "abilities.ultra-instinct.dodge-chance", 0.5, 0.0, 1.0)) return false;
 
-        // ВАЖНО: флаг берётся из данных САМОЙ ЖЕРТВЫ (Map<UUID, PlayerAbilityData>),
-        // ultraInstinctActive соперника на этот метод не влияет (проверка (a)).
-        boolean active = data.ultraInstinctActive;
-        if (!active) return false;
-
-        // Ролл фиксируем ВСЕГДА — он есть в логе даже если уворот отбит
-        // внутренним интервалом (см. ниже).
-        double roll = random.nextDouble();
-        boolean wouldDodge = roll < 0.5;
-
-        long internalCdLeftMs = data.ultraInstinctLastDodgeAt + ULTRA_INSTINCT_DODGE_INTERNAL_CD_MS
-                - System.currentTimeMillis();
-
-        String result;
-        if (internalCdLeftMs > 0) {
-            // Второй и далее хиты в пределах 400мс гарантированно проходят:
-            // цепочка из N уворотов в одном тике невозможна.
-            result = "N/A blockedCdMs=" + internalCdLeftMs;
-        } else {
-            result = wouldDodge ? "true" : "false";
-        }
-
-        // ЛОГ НА КАЖДЫЙ РОЛЛ (требование (b)): жертва, значение ролла,
-        // результат уворота (true/false) и был ли ultraInstinctActive=true
-        // именно в момент хита. Эта строка — единственное доказательство
-        // того, что отмена урона пришлась именно на Ультра Инстинкт.
-        DebugLog.log(plugin, "UI-RNG",
-                "victim=" + victim.getName() + " attacker=" + attacker.getName()
-                        + " active=" + active
-                        + " roll=" + String.format(Locale.ROOT, "%.3f", roll)
-                        + " dodged=" + result);
-
-        if (!wouldDodge || internalCdLeftMs > 0) return false;
-
-        long now = System.currentTimeMillis();
         event.setCancelled(true);
-        data.ultraInstinctLastDodgeAt = now;
-
-        performRandomHorizontalTeleport(victim, "ui_dodge");
-        victim.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§b§lУльтра Инстинкт: уклонение!"));
-        victim.playSound(victim.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 0.6f, 1.8f);
-
+        performRandomHorizontalTeleport(victim);
+        victim.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.ultra-instinct.dodge-message", "&b&lУльтра Инстинкт: уклонение!")));
+        victim.playSound(victim.getLocation(), plugin.getSettings().sound(
+                "abilities.ultra-instinct.dodge-sound", Sound.ENTITY_ENDERMAN_TELEPORT), 0.6f, 1.8f);
         return true;
     }
 
-    /**
-     * Телепортирует игрока на 1 блок в полностью случайном горизонтальном направлении
-     * (Y не меняется — не вверх и не вниз). Используется и уворотом, и Ультра Инстинктом.
-     *
-     * @param reason для отладочной атрибуции: t3_dodge / ui_dodge
-     */
-    private void performRandomHorizontalTeleport(Player victim, String reason) {
-        Location vLoc = victim.getLocation();
+    private void performRandomHorizontalTeleport(Player victim) {
+        Location from = victim.getLocation();
         double angle = random.nextDouble() * 2 * Math.PI;
-        double x = Math.cos(angle);
-        double z = Math.sin(angle);
+        double distance = plugin.getSettings().decimal("abilities.dodge.teleport-distance", 1.0, 0.25, 8.0);
+        Location target = from.clone().add(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
+        target.setDirection(from.getDirection());
 
-        Location target = vLoc.clone().add(x, 0, z);
-        target.setY(vLoc.getY());
-        target.setDirection(vLoc.getDirection());
-
-        victim.getWorld().spawnParticle(Particle.SMOKE, vLoc.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
+        int particles = plugin.getSettings().integer("abilities.dodge.teleport-particle-count", 20, 0, 500);
+        victim.getWorld().spawnParticle(Particle.SMOKE, from.clone().add(0, 1, 0),
+                particles, 0.3, 0.5, 0.3, 0.02);
         victim.teleport(target);
-        victim.getWorld().spawnParticle(Particle.SMOKE, target.clone().add(0, 1, 0), 20, 0.3, 0.5, 0.3, 0.02);
-
-        // СТАНДАРТНЫЙ паттерн (side-effect баг #2): ЛЮБЫЙ телепорт игрока во
-        // время боя должен снимать неявное окно неуязвимости Paper —
-        // немедленно + каждый тик в течение 3 секунд (см.
-        // clearPostTeleportInvulnWindow). Одноразового next-tick reset
-        // недостаточно: Paper может (пере)выставить окно позже.
-        PlayerAbilityData vData = getData(victim);
-        if (vData != null) {
-            vData.lastDodgeTeleportAt = System.currentTimeMillis();
-        }
-        clearPostTeleportInvulnWindow(victim, reason);
-    }
-
-    /**
-     * Как долго форсируем снятие окна неуязвимости после боевого телепорта (тиков).
-     * 60 тиков = 3 секунды: накрывает верификационное окно 1–3с после swap и
-     * любое "отложенное" повторное выставление окна Paper.
-     */
-    private static final int POST_TELEPORT_INVULN_FORCE_TICKS = 60;
-
-    /**
-     * Стандартный safety-паттерн после ЛЮБОГО Entity#teleport() на игрока в
-     * активном бою (Teleport Swap, Dodge-уворот, Ультра Инстинкт и любые
-     * будущие телепорт-способности).
-     *
-     * Paper/Vanilla неявно выставляет короткое окно неуязвимости
-     * (noDamageTicks > 0) сразу после teleport() — тот же механизм, что
-     * пост-хитная/респаунная иммунитет-задержка. Пока оно стоит, весь
-     * входящий урон глушится без какого-либо нашего кода (событие урона
-     * может вообще не срабатывать). Именно это давало ~2 секунды "бессмертия"
-     * ОБЕИМ игрокам после Teleport Swap (баг #2).
-     *
-     * ВАЖНО (фикс повторной неуязвимости): одноразового reset на следующем
-     * тике НЕДОСТАТОЧНО — Paper может (пере)выставить окно в ЛЮБОЙ
-     * последующий тик (наблюдались повторные выставления и заметно позже,
-     * чем в том же тике). Поэтому:
-     *   1) сбрасываем окно НЕМЕДЛЕННО после teleport();
-     *   2) затем КАЖДЫЙ тик в течение POST_TELEPORT_INVULN_FORCE_TICKS
-     *      принудительно держим noDamageTicks = 0 (и снимаем флаг
-     *      invulnerable, если сервер выставляет его при телепорте).
-     *
-     * Любое реальное сбрасывание логируется строкой TELEPORT-INVULN с фазой
-     * (immediate / tickN) и значением — это прямое доказательство "окна
-     * Paper" с точным тиком, когда оно (пере)выставлялось. Если таких строк
-     * нет вообще — окно не выставляется, и неуязвимость имеет иную причину
-     * (см. UI-RNG / DODGE-T3 / DAMAGE строки).
-     *
-     * Следствие для Ультра Инстинкта: каждый уворот телепортирует игрока и
-     * запускает новый 3-секундный цикл форсинга, поэтому в бою с активным UI
-     * окно неуязвимости не успевает закрепиться, и все НЕ-ододженные (50%)
-     * хиты проходят полностью — "неуязвимость на всё время UI" исключена.
-     *
-     * @param reason для атрибуции: t3_swap / t3_dodge / ui_dodge
-     */
-    private void clearPostTeleportInvulnWindow(Player p, String reason) {
-        // Проход 1: немедленно (окно, выставленное синхронно внутри teleport())
-        forceZeroInvulnState(p, reason, "immediate");
-
-        // Проходы 2..N: каждый тик, пока длится окно форсинга (3 секунды).
-        // Ловит ЛЮБОЕ повторное выставление окна Paper, независимо от того,
-        // в каком тике именно Paper его (пере)выставит.
-        new BukkitRunnable() {
-            private int ticks = 0;
-
-            @Override
-            public void run() {
-                if (!p.isOnline() || ++ticks > POST_TELEPORT_INVULN_FORCE_TICKS) {
-                    this.cancel();
-                    return;
-                }
-                // Состояние ДО сброса — для SWAP-AUDIT (у swap: раз в секунду)
-                boolean isSwap = "t3_swap".equals(reason);
-                int preClear = isSwap ? DebugLog.getNoDamageTicks(plugin, p) : -1;
-                boolean preInvul = isSwap && p.isInvulnerable();
-                forceZeroInvulnState(p, reason, "tick" + ticks);
-                if (isSwap && ticks % 20 == 0) {
-                    String resist = p.hasPotionEffect(PotionEffectType.RESISTANCE)
-                            ? String.valueOf(p.getPotionEffect(PotionEffectType.RESISTANCE).getAmplifier() + 1)
-                            : "none";
-                    // Дистанция до оппонента: если она велика — "бесмертие"
-                    // на самом деле восприятие (игроки далеко/улетели), а не
-                    // блокировка урона.
-                    String dist = "n/a";
-                    try {
-                        org.warpeak.orbit.duel.Duel duel = Orbit.get().getDuelManager().getDuel(p);
-                        if (duel != null) {
-                            Player op = duel.getOpponent(p);
-                            if (op != null && op.isOnline()) {
-                                dist = String.format(Locale.ROOT, "%.1f", p.getLocation().distance(op.getLocation()));
-                            }
-                        }
-                    } catch (Exception ignored) { }
-                    DebugLog.log(plugin, "SWAP-AUDIT",
-                            "victim=" + p.getName() + " tick=" + ticks
-                                    + " health=" + p.getHealth()
-                                    + " distOpponent=" + dist
-                                    + " preClearNoDamageTicks=" + preClear
-                                    + " preClearInvulFlag=" + preInvul
-                                    + " resist=" + resist);
-                }
-            }
-        }.runTaskTimer(plugin, 1L, 1L);
-    }
-
-    /**
-     * Принудительно сбрасывает ИСТОЧНИКИ "боевой неуязвимости" игрока:
-     *   1) noDamageTicks > 0 — неявное окно Paper (после teleport() / после хита);
-     *   2) флаг invulnerable — если сервер выставляет его при телепорте.
-     * Сброс noDamageTicks УЛОВНЫЙ (выполняется ВСЕГДА) и не зависит от
-     * доступности диагностического геттера: если геттер недоступен
-     * (вернёт -1), окно всё равно снимается. Строка TELEPORT-INVULN
-     * пишется, только если реально найдено ненулевое значение.
-     */
-    private void forceZeroInvulnState(Player p, String reason, String phase) {
-        // Диагностическое значение (для лога) — оно НЕ используется как
-        // условие сброса (при таком условии окно Paper могло не сниматься
-        // на рантайме, где геттер не резолвится).
-        int noDamageTicks = DebugLog.getNoDamageTicks(plugin, p);
-        p.setNoDamageTicks(0);
-        if (noDamageTicks > 0) {
-            DebugLog.log(plugin, "TELEPORT-INVULN",
-                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
-                            + " noDamageTicksFound=" + noDamageTicks + " -> cleared");
-        }
-
-        if (p.isInvulnerable()) {
-            p.setInvulnerable(false);
-            DebugLog.log(plugin, "TELEPORT-INVULN",
-                    "victim=" + p.getName() + " reason=" + reason + " phase=" + phase
-                            + " invulnerableFlag=true -> cleared");
-        }
-
-        // Paper 1.21.2+: окно неуязвимости может храниться в "причинах"
-        // (invulnerable causes), а не в noDamageTicks/invulnerable.
-        // Пробуется через рефлексию — на старых сборках это безобидный no-op.
-        DebugLog.clearInvulnCauses(plugin, p, reason, phase);
+        victim.getWorld().spawnParticle(Particle.SMOKE, target.clone().add(0, 1, 0),
+                particles, 0.3, 0.5, 0.3, 0.02);
     }
 
     // ==================== Возрождение Феникса (тир3, реактивная) ====================
@@ -512,14 +386,16 @@ public class AbilityManager {
         if (data.phoenixUsed) return false;
 
         data.phoenixUsed = true;
-        data.phoenixUsedAt = System.currentTimeMillis();
 
         double max = p.getAttribute(Attribute.MAX_HEALTH).getValue();
-        p.setHealth(Math.max(1.0, max / 2.0));
+        double healthFraction = plugin.getSettings().decimal(
+                "abilities.phoenix-rebirth.health-fraction", 0.5, 0.05, 1.0);
+        p.setHealth(Math.max(1.0, max * healthFraction));
         p.setFireTicks(0);
 
         spawnPhoenixRebirthEffect(p);
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§6§l🔥 ВОЗРОЖДЕНИЕ ФЕНИКСА! 🔥"));
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.phoenix-rebirth.activation-message", "&6&l🔥 ВОЗРОЖДЕНИЕ ФЕНИКСА! 🔥")));
 
         return true;
     }
@@ -528,18 +404,29 @@ public class AbilityManager {
         World w = p.getWorld();
         Location loc = p.getLocation().add(0, 1, 0);
 
-        w.spawnParticle(Particle.FLAME, loc, 60, 0.6, 1.0, 0.6, 0.05);
-        w.spawnParticle(Particle.DUST, loc, 40, 0.6, 1.0, 0.6, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 80, 0), 1.8f));
-        w.spawnParticle(Particle.DUST, loc, 40, 0.6, 1.0, 0.6, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 215, 0), 1.8f));
-        w.spawnParticle(Particle.DUST, loc, 30, 0.6, 1.0, 0.6, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 140, 0), 1.8f));
-        w.spawnParticle(Particle.LAVA, loc, 8, 0.4, 0.6, 0.4, 0);
+        w.spawnParticle(Particle.FLAME, loc,
+                plugin.getSettings().integer("abilities.phoenix-rebirth.flame-particle-count", 60, 0, 1000),
+                0.6, 1.0, 0.6, 0.05);
+        float scale = particleScale("abilities.visuals.burst-dust-scale", 1.8f);
+        w.spawnParticle(Particle.DUST, loc,
+                plugin.getSettings().integer("abilities.phoenix-rebirth.dust-particle-count", 40, 0, 1000),
+                0.6, 1.0, 0.6, 0, new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.phoenix-rebirth.colors.fire", Color.fromRGB(255, 80, 0)), scale));
+        w.spawnParticle(Particle.DUST, loc,
+                plugin.getSettings().integer("abilities.phoenix-rebirth.dust-particle-count", 40, 0, 1000),
+                0.6, 1.0, 0.6, 0, new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.phoenix-rebirth.colors.gold", Color.fromRGB(255, 215, 0)), scale));
+        w.spawnParticle(Particle.DUST, loc,
+                plugin.getSettings().integer("abilities.phoenix-rebirth.orange-particle-count", 30, 0, 1000),
+                0.6, 1.0, 0.6, 0, new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.phoenix-rebirth.colors.orange", Color.fromRGB(255, 140, 0)), scale));
+        w.spawnParticle(Particle.LAVA, loc,
+                plugin.getSettings().integer("abilities.phoenix-rebirth.lava-particle-count", 8, 0, 1000),
+                0.4, 0.6, 0.4, 0);
 
-        w.playSound(loc, Sound.ENTITY_BLAZE_HURT, 1f, 1f);
-        w.playSound(loc, Sound.ITEM_FIRECHARGE_USE, 1f, 0.7f);
-        w.playSound(loc, Sound.ENTITY_PLAYER_LEVELUP, 1f, 0.8f);
+        w.playSound(loc, plugin.getSettings().sound("abilities.phoenix-rebirth.sound-primary", Sound.ENTITY_BLAZE_HURT), 1f, 1f);
+        w.playSound(loc, plugin.getSettings().sound("abilities.phoenix-rebirth.sound-secondary", Sound.ITEM_FIRECHARGE_USE), 1f, 0.7f);
+        w.playSound(loc, plugin.getSettings().sound("abilities.phoenix-rebirth.sound-success", Sound.ENTITY_PLAYER_LEVELUP), 1f, 0.8f);
     }
 
     // ==================== Активация ТИР 3 через F ====================
@@ -577,72 +464,56 @@ public class AbilityManager {
     private void activateDodge(Player p, PlayerAbilityData data) {
         long now = System.currentTimeMillis();
         if (now < data.dodgeCooldownUntil) {
-            long msLeft = data.dodgeCooldownUntil - now;
-            long secondsLeft = (msLeft / 1000) + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cУклонение перезаряжается: " + secondsLeft + "с"));
-            // Лог "отбитого" нажатия: прямое доказательство того, что спам F
-            // не может ни продлить окно вооружения, ни сбросить кулдаун (баг #1).
-            DebugLog.log(plugin, "DODGE-T3-REJECT",
-                    "player=" + p.getName() + " reason=on_cooldown cdMsLeft=" + msLeft);
+            long secondsLeft = (data.dodgeCooldownUntil - now) / 1000 + 1;
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.dodge.cooldown-message", "&cУклонение перезаряжается: {seconds}с")
+                    .replace("{seconds}", Long.toString(secondsLeft))));
             return;
         }
 
-        // === FIX (баг #1) ===
-        // Кулдаун выставляется В МОМЕНТ АКТИВАЦИИ — независимо от исхода
-        // (попасть в окно или нет), а не после истечения 1-секундного окна
-        // вооружения, как было ранее.
-        //
-        // Старый баг: dodgeCooldownUntil оставался 0/истёкшим на всё время
-        // окна, поэтому спам F быстрее 1 сек проходил проверку кулдауна и
-        // бесконечно пересоздавал вооружение (re-arm). Все удары в таком
-        // бесконечно продлённом окне отменялись (в логах: 3 хита за секунду,
-        // все cancelled=true) — фактически постоянная неуязвимость при спаме.
-        //
-        // Теперь: окно вооружения (1с) и кулдаун (5с) идут НЕЗАВИСИМО —
-        // кулдаун запущен в момент нажатия и никаким последующим нажатием,
-        // истечением окна или срабатыванием уворота не сбрасывается
-        // (в tryDodge — только Math.max, т.е. только продление).
-        data.dodgeCooldownUntil = now + 5000;
-        data.dodgeActivatedAt = now;
+        int windowTicks = plugin.getSettings().secondsToTicks("abilities.dodge.window-seconds", 1);
+        data.dodgeCooldownUntil = now + plugin.getSettings().secondsToMillis("abilities.dodge.cooldown-seconds", 5);
         data.dodgeArmed = true;
-        data.dodgeArmedUntil = now + 1000;
+        data.dodgeArmedUntil = now + windowTicks * 50L;
 
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§dУклонение активно 1 сек!"));
-        p.playSound(p.getLocation(), Sound.ITEM_TRIDENT_RIPTIDE_1, 0.6f, 1.5f);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.dodge.armed-message", "&dУклонение активно {seconds} сек!")
+                .replace("{seconds}", Integer.toString(plugin.getSettings().integer(
+                        "abilities.dodge.window-seconds", 1, 1, 60)))));
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.dodge.activation-sound", Sound.ITEM_TRIDENT_RIPTIDE_1), 0.6f, 1.5f);
 
-        DebugLog.log(plugin, "DODGE-T3-ACTIVATE",
-                "player=" + p.getName() + " cdMs=5000 armedWindowMs=1000");
-
-        // Таймер снимает ТОЛЬКО вооружение, если за окно хит не пришёл.
-        // Кулдаун этим таском НЕ трогается — он уже идёт с момента активации,
-        // поэтому пересеков/сбросов окно↔кулдаун быть не может.
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            if (data.dodgeArmed) {
-                data.dodgeArmed = false;
-                DebugLog.log(plugin, "DODGE-T3-EXPIRE",
-                        "player=" + p.getName() + " armedWindowMs=1000 (no hit in window)");
-            }
-        }, 20L);
+            if (data.dodgeArmed) data.dodgeArmed = false;
+        }, windowTicks);
     }
 
     private void activateHealBurst(Player p, PlayerAbilityData data) {
         long now = System.currentTimeMillis();
         if (now < data.healBurstCooldownUntil) {
             long secondsLeft = (data.healBurstCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cПерезарядка: " + secondsLeft + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.heal-burst.cooldown-message", "&cПерезарядка: {seconds}с")
+                    .replace("{seconds}", Long.toString(secondsLeft))));
             return;
         }
 
-        p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, 5 * 20, 0));
-        p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 5 * 20, 1));
+        int effectDuration = durationTicks("abilities.heal-burst.effect-duration-seconds", 5);
+        p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, effectDuration,
+                plugin.getSettings().integer("abilities.heal-burst.resistance-amplifier", 0, 0, 255)));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, effectDuration,
+                plugin.getSettings().integer("abilities.heal-burst.regeneration-amplifier", 1, 0, 255)));
 
         double max = p.getAttribute(Attribute.MAX_HEALTH).getValue();
-        p.setHealth(Math.min(max, p.getHealth() + 4.0));
+        double healAmount = plugin.getSettings().decimal("abilities.heal-burst.heal-amount", 4.0, 0.0, 40.0);
+        p.setHealth(Math.min(max, p.getHealth() + healAmount));
 
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§aВсплеск исцеления!"));
-        p.getWorld().spawnParticle(Particle.HEART, p.getLocation().add(0, 1.5, 0), 10, 0.3, 0.3, 0.3, 0);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.heal-burst.activation-message", "&aВсплеск исцеления!")));
+        p.getWorld().spawnParticle(Particle.HEART, p.getLocation().add(0, 1.5, 0),
+                plugin.getSettings().integer("abilities.heal-burst.particle-count", 10, 0, 500), 0.3, 0.3, 0.3, 0);
 
-        data.healBurstCooldownUntil = now + 20000;
+        data.healBurstCooldownUntil = now + cooldownMillis("abilities.heal-burst.cooldown-seconds", 20);
     }
 
     // ==================== Ударная волна (ТИР 3) ====================
@@ -651,49 +522,32 @@ public class AbilityManager {
         long now = System.currentTimeMillis();
         if (now < data.knockbackWaveCooldownUntil) {
             long secondsLeft = (data.knockbackWaveCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cПерезарядка: " + secondsLeft + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                    new TextComponent(plugin.getSettings().text("abilities.knockback-wave.cooldown-message",
+                            "&cПерезарядка: {seconds}с").replace("{seconds}", Long.toString(secondsLeft))));
             return;
         }
 
-        data.knockbackWaveCooldownUntil = now + 15000;
+        data.knockbackWaveCooldownUntil = now + cooldownMillis("abilities.knockback-wave.cooldown-seconds", 15);
+        Location center = p.getLocation().clone();
+        double maxRadius = plugin.getSettings().decimal("abilities.knockback-wave.radius", 3.0, 0.5, 32.0);
 
-        Location center = p.getLocation();
-        double maxRadius = 3.0;
+        p.playSound(center, plugin.getSettings().sound(
+                "abilities.knockback-wave.activation-sound", Sound.ENTITY_EVOKER_CAST_SPELL),
+                (float) plugin.getSettings().decimal("abilities.knockback-wave.sound-volume", 1.0, 0.0, 2.0),
+                (float) plugin.getSettings().decimal("abilities.knockback-wave.sound-pitch", 1.2, 0.5, 2.0));
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR,
+                new TextComponent(plugin.getSettings().text("abilities.knockback-wave.activation-message", "&fУдарная волна!")));
 
-        p.playSound(center, Sound.ENTITY_EVOKER_CAST_SPELL, 1f, 1.2f);
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§fУдарная волна!"));
-
-        new BukkitRunnable() {
-            double radius = 0.3;
-
-            @Override
-            public void run() {
-                if (radius > maxRadius) {
-                    applyKnockbackWaveEffect(p, center, maxRadius);
-                    this.cancel();
-                    return;
-                }
-
-                int step = 0;
-                for (double angle = 0; angle < 360; angle += 15) {
-                    double rad = Math.toRadians(angle);
-                    double x = center.getX() + radius * Math.cos(rad);
-                    double z = center.getZ() + radius * Math.sin(rad);
-                    Location particleLoc = new Location(center.getWorld(), x, center.getY() + 0.1, z);
-
-                    Color color = (step % 2 == 0) ? Color.fromRGB(255, 255, 255) : Color.fromRGB(180, 180, 180);
-                    center.getWorld().spawnParticle(Particle.DUST, particleLoc, 1, 0, 0, 0, 0,
-                            new Particle.DustOptions(color, 1.3f));
-                    step++;
-                }
-
-                radius += 0.5;
-            }
-        }.runTaskTimer(plugin, 0L, 1L);
+        Color innerColor = plugin.getSettings().color(
+                "abilities.knockback-wave.colors.inner", Color.fromRGB(180, 180, 180));
+        Color outerColor = plugin.getSettings().color("abilities.knockback-wave.colors.outer", Color.WHITE);
+        startExpandingRing(p, data, center, maxRadius, innerColor, outerColor,
+                () -> applyKnockbackWaveEffect(p, center, maxRadius));
     }
 
     private void applyKnockbackWaveEffect(Player p, Location center, double radius) {
-        for (Entity entity : p.getWorld().getNearbyEntities(center, radius, radius, radius)) {
+        for (Entity entity : center.getWorld().getNearbyEntities(center, radius, radius, radius)) {
             if (!(entity instanceof Player target) || target.equals(p)) continue;
             if (target.getLocation().distance(center) > radius + 0.5) continue;
 
@@ -701,15 +555,69 @@ public class AbilityManager {
             if (direction.lengthSquared() < 0.01) {
                 direction = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
             }
-            direction.normalize().multiply(1.4);
-            direction.setY(0.35);
-
+            target.damage(plugin.getSettings().decimal("abilities.knockback-wave.damage", 6.0, 0.0, 2048.0), p);
+            direction.normalize().multiply(plugin.getSettings().decimal(
+                    "abilities.knockback-wave.knockback-horizontal", 1.4, 0.0, 10.0));
+            direction.setY(plugin.getSettings().decimal(
+                    "abilities.knockback-wave.knockback-vertical", 0.35, 0.0, 5.0));
             target.setVelocity(direction);
-            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20, 0));
+            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,
+                    durationTicks("abilities.knockback-wave.blindness-duration-seconds", 1),
+                    plugin.getSettings().integer("abilities.knockback-wave.blindness-amplifier", 0, 0, 255)));
         }
+    }
 
-        center.getWorld().spawnParticle(Particle.EXPLOSION, center.clone().add(0, 1, 0), 1);
-        p.getWorld().playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.6f, 1.6f);
+    private void startExpandingRing(Player source, PlayerAbilityData data, Location center,
+                                    double maxRadius, Color firstColor, Color secondColor,
+                                    Runnable onComplete) {
+        Location waveCenter = center.clone();
+        int duration = intervalTicks("abilities.visuals.expanding-wave-duration-ticks", 20);
+        spawnExpandingParticleRing(waveCenter, maxRadius, firstColor, secondColor, duration);
+
+        BukkitRunnable completionTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                data.expandingRingTasks.remove(getTaskId());
+                if (!source.isOnline() || dataMap.get(source.getUniqueId()) != data) return;
+                onComplete.run();
+            }
+        };
+        data.expandingRingTasks.add(completionTask.runTaskLater(plugin, duration).getTaskId());
+    }
+
+    private void spawnExpandingParticleRing(Location center, double maxRadius,
+                                           Color firstColor, Color secondColor, int durationTicks) {
+        World world = center.getWorld();
+        int points = getRingPointCount(maxRadius);
+        float scale = particleScale("abilities.visuals.wave-dust-scale", 1.0f);
+        Particle.DustOptions first = new Particle.DustOptions(firstColor, scale);
+        Particle.DustOptions second = new Particle.DustOptions(secondColor, scale);
+
+        double maxStartRadius = Math.max(0.01, maxRadius * 0.5);
+        double startRadius = plugin.getSettings().decimal(
+                "abilities.visuals.expanding-wave-start-radius", 0.35, 0.01, maxStartRadius);
+        double retention = plugin.getSettings().decimal(
+                "abilities.visuals.wave-particle-retention", 0.97, 0.5, 0.999);
+        double travelFactor = (1.0 - Math.pow(retention, durationTicks)) / (1.0 - retention);
+        double particleSpeed = (maxRadius - startRadius) / travelFactor;
+        double yOffset = plugin.getSettings().decimal("abilities.visuals.expanding-wave-y-offset", 0.1, -2.0, 4.0);
+
+        for (int i = 0; i < points; i++) {
+            double angle = 2 * Math.PI * i / points;
+            double directionX = Math.cos(angle);
+            double directionZ = Math.sin(angle);
+            Location point = center.clone().add(directionX * startRadius, yOffset, directionZ * startRadius);
+            world.spawnParticle(Particle.DUST, point, 0, directionX, 0, directionZ, particleSpeed,
+                    (i % 2 == 0) ? first : second);
+        }
+    }
+
+    private int getRingPointCount(double radius) {
+        double spacing = plugin.getSettings().decimal("abilities.visuals.ring-point-spacing", 0.12, 0.04, 1.0);
+        int minimum = plugin.getSettings().integer("abilities.visuals.ring-min-points", 48, 8, 512);
+        int maximum = plugin.getSettings().integer("abilities.visuals.ring-max-points", 256, minimum, 1024);
+        int points = (int) Math.ceil(2 * Math.PI * radius / spacing);
+        return Math.max(minimum, Math.min(maximum, points));
     }
 
     // ==================== Обмен местами (ТИР 3) ====================
@@ -718,65 +626,42 @@ public class AbilityManager {
         long now = System.currentTimeMillis();
         if (now < data.teleportSwapCooldownUntil) {
             long secondsLeft = (data.teleportSwapCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cПерезарядка: " + secondsLeft + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.teleport-swap.cooldown-message", "&cПерезарядка: {seconds}с")
+                    .replace("{seconds}", Long.toString(secondsLeft))));
             return;
         }
 
-        Player target = getTargetPlayer(p, 20.0);
+        double range = plugin.getSettings().decimal("abilities.teleport-swap.target-range", 20.0, 1.0, 128.0);
+        Player target = getTargetPlayer(p, range);
         if (target == null) {
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cНет цели впереди!"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.teleport-swap.no-target-message", "&cНет цели впереди!")));
             return;
         }
 
-        data.teleportSwapCooldownUntil = now + 5000;
-
+        data.teleportSwapCooldownUntil = now + cooldownMillis("abilities.teleport-swap.cooldown-seconds", 5);
         Location pLoc = p.getLocation().clone();
         Location tLoc = target.getLocation().clone();
+        int particleCount = plugin.getSettings().integer("abilities.teleport-swap.particle-count", 30, 0, 500);
+        p.getWorld().spawnParticle(Particle.PORTAL, pLoc.clone().add(0, 1, 0), particleCount, 0.3, 0.5, 0.3, 0.05);
+        target.getWorld().spawnParticle(Particle.PORTAL, tLoc.clone().add(0, 1, 0), particleCount, 0.3, 0.5, 0.3, 0.05);
 
-        p.getWorld().spawnParticle(Particle.PORTAL, pLoc.clone().add(0, 1, 0), 30, 0.3, 0.5, 0.3, 0.05);
-        target.getWorld().spawnParticle(Particle.PORTAL, tLoc.clone().add(0, 1, 0), 30, 0.3, 0.5, 0.3, 0.05);
-
-        // ДО УМА: после обмена игроки смотрят друг на друга
         tLoc.setDirection(pLoc.toVector().subtract(tLoc.toVector()));
         pLoc.setDirection(tLoc.toVector().subtract(pLoc.toVector()));
-
         p.teleport(tLoc);
         target.teleport(pLoc);
-
-        // Останавливаем старый импульс: иначе после длинного телепорта игрок
-        // сохраняет предтелепортационную скорость и может "пролететь" арену
         p.setVelocity(new Vector());
         target.setVelocity(new Vector());
 
-        // === FIX (баг #2) ===
-        // Bukkit/Paper Entity#teleport() неявно выставляет короткое окно
-        // неуязвимости (noDamageTicks) у ОБОИХ телепортированных игроков —
-        // тот же механизм, что пост-хитная иммунитет-задержка. Одиночного
-        // reset в том же тике НЕДОСТАТОЧНО: Paper иногда выставляет окно
-        // ЧУТЬ ПОЗЖЕ, уже после завершения вызова teleport() в рамках того
-        // же тика. Поэтому снимаем окно ДВОЙНЫМ reset у обоих игроков:
-        // немедленно после teleport() И на следующем серверном тике.
-        // До этого фикса оба игрока были "неуязвимы" ~2 секунды после swap.
-        long swapAt = System.currentTimeMillis();
-        data.lastSwapAt = swapAt;
-        PlayerAbilityData tData = getData(target);
-        if (tData != null) {
-            tData.lastSwapAt = swapAt;
-        }
-        clearPostTeleportInvulnWindow(p, "t3_swap");
-        clearPostTeleportInvulnWindow(target, "t3_swap");
-
-        target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20, 0));
-
-        p.playSound(p.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
-        target.playSound(target.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1f);
-
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§bОбмен местами!"));
-
-        DebugLog.log(plugin, "TELEPORT-SWAP",
-                "caster=" + p.getName() + " target=" + target.getName()
-                        + " invulnWindowCleared=immediate+nextTick cdMs=5000"
-                        + " build=" + DebugLog.BUILD);
+        target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS,
+                durationTicks("abilities.teleport-swap.blindness-duration-seconds", 1),
+                plugin.getSettings().integer("abilities.teleport-swap.blindness-amplifier", 0, 0, 255)));
+        Sound sound = plugin.getSettings().sound("abilities.teleport-swap.sound", Sound.ENTITY_ENDERMAN_TELEPORT);
+        p.playSound(p.getLocation(), sound, 1f, 1f);
+        target.playSound(target.getLocation(), sound, 1f, 1f);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.teleport-swap.activation-message", "&bОбмен местами!")));
     }
 
     private Player getTargetPlayer(Player p, double maxDistance) {
@@ -797,56 +682,64 @@ public class AbilityManager {
         long now = System.currentTimeMillis();
         if (now < data.monsterAuraCooldownUntil) {
             long left = (data.monsterAuraCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cАура Монстра перезаряжается: " + left + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.monster-aura.cooldown-message", "&cАура Монстра перезаряжается: {seconds}с")
+                    .replace("{seconds}", Long.toString(left))));
             return;
         }
 
-        data.monsterAuraCooldownUntil = now + 120_000;
+        data.monsterAuraCooldownUntil = now + cooldownMillis("abilities.monster-aura.cooldown-seconds", 120);
         data.monsterAuraActive = true;
+        int duration = durationTicks("abilities.monster-aura.duration-seconds", 15);
+        int auraUpdateTicks = intervalTicks("abilities.visuals.aura-update-interval-ticks", 1);
+        int waveInterval = durationTicks("abilities.monster-aura.wave-interval-seconds", 5);
+        int waveCount = plugin.getSettings().integer("abilities.monster-aura.wave-count", 3, 0, 100);
 
-        p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, 15 * 20, 1));
-        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 15 * 20, 1));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.STRENGTH, duration,
+                plugin.getSettings().integer("abilities.monster-aura.strength-amplifier", 1, 0, 255)));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, duration,
+                plugin.getSettings().integer("abilities.monster-aura.speed-amplifier", 1, 0, 255)));
 
-        World w = p.getWorld();
+        World world = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
-        w.spawnParticle(Particle.EXPLOSION, start, 1);
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 0, 0), 2.0f));
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.fromRGB(0, 0, 0), 2.0f));
+        if (plugin.getSettings().bool("abilities.monster-aura.activation-explosion-particle", true)) {
+            world.spawnParticle(Particle.EXPLOSION, start, 1);
+        }
+        int burstCount = plugin.getSettings().integer("abilities.visuals.activation-dust-count", 50, 0, 500);
+        float burstScale = particleScale("abilities.visuals.activation-dust-scale", 2.0f);
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.inner", Color.fromRGB(255, 0, 0)), burstScale));
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.outer", Color.fromRGB(0, 0, 0)), burstScale));
 
-        int auraTask = new BukkitRunnable() {
+        data.monsterAuraTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!p.isOnline()) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    cancel();
                     return;
                 }
                 spawnMonsterAuraParticles(p);
             }
-        }.runTaskTimer(plugin, 0L, 2L).getTaskId();
-        data.monsterAuraTask = auraTask;
+        }.runTaskTimer(plugin, 0L, auraUpdateTicks).getTaskId();
 
-        int waveTask = new BukkitRunnable() {
-            int wave = 0;
+        data.monsterWaveTask = new BukkitRunnable() {
+            private int waves;
 
             @Override
             public void run() {
-                if (!p.isOnline()) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data || ++waves > waveCount) {
+                    cancel();
                     return;
                 }
-                wave++;
-                if (wave > 3) {
-                    this.cancel();
-                    return;
-                }
-                spawnMonsterWave(p);
+                spawnMonsterWave(p, data);
             }
-        }.runTaskTimer(plugin, 100L, 100L).getTaskId();
-        data.monsterWaveTask = waveTask;
+        }.runTaskTimer(plugin, waveInterval, waveInterval).getTaskId();
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+        data.monsterAuraEndTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (dataMap.get(p.getUniqueId()) != data) return;
             p.removePotionEffect(PotionEffectType.STRENGTH);
             reapplyPassiveEffects(p, data);
             data.monsterAuraActive = false;
@@ -854,103 +747,107 @@ public class AbilityManager {
             if (data.monsterWaveTask != -1) Bukkit.getScheduler().cancelTask(data.monsterWaveTask);
             data.monsterAuraTask = -1;
             data.monsterWaveTask = -1;
-        }, 15 * 20L);
+            data.monsterAuraEndTask = -1;
+        }, duration).getTaskId();
 
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§4§lАура Монстра активирована!"));
-        p.playSound(p.getLocation(), Sound.ENTITY_WITHER_SPAWN, 1f, 1f);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.monster-aura.activation-message", "&4&lАура Монстра активирована!")));
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.monster-aura.activation-sound", Sound.ENTITY_WITHER_SPAWN), 1f, 1f);
+    }
+
+    /** Emit a rotating particle ring that follows the player's current motion. */
+    private void spawnParticleRing(Player player, double radius, double yOffset, int points,
+                                   Color firstColor, Color secondColor) {
+        World world = player.getWorld();
+        Location center = player.getLocation();
+        Vector velocity = player.getVelocity().multiply(plugin.getSettings().decimal(
+                "abilities.visuals.aura-velocity-scale", 1.0, 0.0, 2.0));
+        float scale = particleScale("abilities.visuals.aura-dust-scale", 1.0f);
+        Particle.DustOptions first = new Particle.DustOptions(firstColor, scale);
+        Particle.DustOptions second = new Particle.DustOptions(secondColor, scale);
+
+        long rotationPeriod = plugin.getSettings().integer(
+                "abilities.visuals.aura-rotation-period-ticks", 80, 1, 12_000) * 50L;
+        double rotation = (System.currentTimeMillis() % rotationPeriod) / (double) rotationPeriod * 2.0 * Math.PI;
+        for (int i = 0; i < points; i++) {
+            double angle = 2 * Math.PI * i / points + rotation;
+            Location point = center.clone().add(Math.cos(angle) * radius, yOffset, Math.sin(angle) * radius);
+            world.spawnParticle(Particle.DUST, point, 0,
+                    velocity.getX(), velocity.getY(), velocity.getZ(), 1.0,
+                    (i % 2 == 0) ? first : second);
+        }
     }
 
     private void spawnMonsterAuraParticles(Player p) {
-        World world = p.getWorld();
-        Location base = p.getLocation().clone();
-        double bob = Math.sin(System.currentTimeMillis() / 150.0) * 0.1;
-        double rot = (System.currentTimeMillis() % 4000) / 4000.0 * 2 * Math.PI;
-
-        double r = 1.3;
-        int points = 24;
-
-        for (int i = 0; i < points; i++) {
-            double angle = 2 * Math.PI * i / points + rot;
-            double x = Math.cos(angle) * r;
-            double z = Math.sin(angle) * r;
-            Location loc = base.clone().add(x, 0.2 + bob, z);
-
-            Color color = (i % 2 == 0) ? Color.fromRGB(255, 0, 0) : Color.fromRGB(0, 0, 0);
-
-            world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 2.0f));
-        }
+        double radius = plugin.getSettings().decimal("abilities.monster-aura.aura-radius", 1.3, 0.1, 8.0);
+        double yOffset = plugin.getSettings().decimal("abilities.monster-aura.aura-height", 0.2, -2.0, 4.0);
+        spawnParticleRing(p, radius, yOffset, getRingPointCount(radius),
+                plugin.getSettings().color("abilities.monster-aura.colors.inner", Color.fromRGB(255, 0, 0)),
+                plugin.getSettings().color("abilities.monster-aura.colors.outer", Color.fromRGB(0, 0, 0)));
     }
 
     private void spawnMonsterHitBurst(Player victim) {
         World world = victim.getWorld();
         Location loc = victim.getLocation().add(0, 1.2, 0);
-        world.spawnParticle(Particle.DUST, loc, 12, 0.3, 0.4, 0.3, 0,
-                new Particle.DustOptions(Color.fromRGB(200, 0, 0), 1.4f));
-        world.spawnParticle(Particle.DUST, loc, 10, 0.25, 0.35, 0.25, 0,
-                new Particle.DustOptions(Color.fromRGB(0, 0, 0), 1.4f));
+        float scale = particleScale("abilities.monster-aura.hit-burst-dust-scale", 1.4f);
+        world.spawnParticle(Particle.DUST, loc,
+                plugin.getSettings().integer("abilities.monster-aura.hit-burst-inner-count", 12, 0, 500),
+                0.3, 0.4, 0.3, 0, new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.hit-inner", Color.fromRGB(200, 0, 0)), scale));
+        world.spawnParticle(Particle.DUST, loc,
+                plugin.getSettings().integer("abilities.monster-aura.hit-burst-outer-count", 10, 0, 500),
+                0.25, 0.35, 0.25, 0, new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.hit-outer", Color.BLACK), scale));
     }
 
-    private void spawnMonsterWave(Player p) {
-        Location center = p.getLocation();
-        double maxRadius = 5.0;
-        World world = center.getWorld();
-
-        p.playSound(center, Sound.ENTITY_WITHER_SHOOT, 1f, 1.2f);
-
-        new BukkitRunnable() {
-            double radius = 0.5;
-
-            @Override
-            public void run() {
-                if (radius > maxRadius) {
-                    applyMonsterWaveDamage(p, center, maxRadius);
-                    this.cancel();
-                    return;
-                }
-
-                int step = 0;
-                for (double angle = 0; angle < 360; angle += 8) {
-                    double rad = Math.toRadians(angle);
-                    double x = center.getX() + radius * Math.cos(rad);
-                    double z = center.getZ() + radius * Math.sin(rad);
-                    Location loc = new Location(world, x, center.getY() + 0.1, z);
-
-                    Color color = (step % 2 == 0) ? Color.fromRGB(255, 0, 0) : Color.fromRGB(0, 0, 0);
-                    world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                            new Particle.DustOptions(color, 1.6f));
-                    step++;
-                }
-                radius += 0.5;
-            }
-        }.runTaskTimer(plugin, 0L, 1L);
+    private void spawnMonsterWave(Player p, PlayerAbilityData data) {
+        Location center = p.getLocation().clone();
+        double radius = plugin.getSettings().decimal("abilities.monster-aura.wave-radius", 5.0, 0.5, 32.0);
+        p.playSound(center, plugin.getSettings().sound(
+                "abilities.monster-aura.wave-sound", Sound.ENTITY_WITHER_SHOOT), 1f, 1.2f);
+        Color inner = plugin.getSettings().color("abilities.monster-aura.colors.wave-inner", Color.fromRGB(80, 0, 0));
+        Color outer = plugin.getSettings().color("abilities.monster-aura.colors.wave-outer", Color.fromRGB(255, 0, 0));
+        startExpandingRing(p, data, center, radius, inner, outer,
+                () -> applyMonsterWaveDamage(p, center, radius));
     }
 
     private void applyMonsterWaveDamage(Player p, Location center, double radius) {
         World world = center.getWorld();
-        world.spawnParticle(Particle.EXPLOSION, center.clone().add(0, 1, 0), 1);
-        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), 20, 0.5, 0.6, 0.5, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 0, 0), 1.6f));
-        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), 20, 0.5, 0.6, 0.5, 0,
-                new Particle.DustOptions(Color.fromRGB(0, 0, 0), 1.6f));
+        if (plugin.getSettings().bool("abilities.monster-aura.wave-explosion-particle", true)) {
+            world.spawnParticle(Particle.EXPLOSION, center.clone().add(0, 1, 0), 1);
+        }
+        int burstCount = plugin.getSettings().integer("abilities.monster-aura.wave-burst-particle-count", 20, 0, 500);
+        float burstScale = particleScale("abilities.visuals.burst-dust-scale", 1.0f);
+        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), burstCount, 0.5, 0.6, 0.5, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.wave-outer", Color.fromRGB(255, 0, 0)), burstScale));
+        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), burstCount, 0.5, 0.6, 0.5, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.monster-aura.colors.wave-inner", Color.fromRGB(80, 0, 0)), burstScale));
 
         for (Entity entity : world.getNearbyEntities(center, radius, radius, radius)) {
             if (!(entity instanceof Player target)) continue;
             if (target.equals(p)) continue;
             if (target.getLocation().distance(center) > radius) continue;
 
-            target.damage(4.0, p);
+            target.damage(plugin.getSettings().decimal("abilities.monster-aura.wave-damage", 4.0, 0.0, 2048.0), p);
 
-            Vector dir = target.getLocation().toVector().subtract(center.toVector());
-            if (dir.lengthSquared() < 0.0001) {
-                dir = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
+            Vector direction = target.getLocation().toVector().subtract(center.toVector());
+            if (direction.lengthSquared() < 0.0001) {
+                direction = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
             }
-            dir.normalize().multiply(1.2);
-            dir.setY(0.3);
-            target.setVelocity(dir);
+            direction.normalize().multiply(plugin.getSettings().decimal(
+                    "abilities.monster-aura.wave-knockback-horizontal", 1.2, 0.0, 10.0));
+            direction.setY(plugin.getSettings().decimal(
+                    "abilities.monster-aura.wave-knockback-vertical", 0.3, 0.0, 5.0));
+            target.setVelocity(direction);
 
-            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 20, 0));
-            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, 20, 0));
+            int duration = durationTicks("abilities.monster-aura.wave-effect-duration-seconds", 1);
+            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, duration,
+                    plugin.getSettings().integer("abilities.monster-aura.wave-slowness-amplifier", 0, 0, 255)));
+            target.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, duration,
+                    plugin.getSettings().integer("abilities.monster-aura.wave-blindness-amplifier", 0, 0, 255)));
         }
     }
 
@@ -960,247 +857,256 @@ public class AbilityManager {
         long now = System.currentTimeMillis();
         if (now < data.archangelCooldownUntil) {
             long left = (data.archangelCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cЗащита Архангела перезаряжается: " + left + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.archangel.cooldown-message", "&cЗащита Архангела перезаряжается: {seconds}с")
+                    .replace("{seconds}", Long.toString(left))));
             return;
         }
 
-        data.archangelCooldownUntil = now + 120_000;
+        data.archangelCooldownUntil = now + cooldownMillis("abilities.archangel.cooldown-seconds", 120);
+        int duration = durationTicks("abilities.archangel.duration-seconds", 15);
+        int auraUpdateTicks = intervalTicks("abilities.visuals.aura-update-interval-ticks", 1);
+        int healInterval = durationTicks("abilities.archangel.heal-interval-seconds", 5);
 
-        p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, 15 * 20, 1));
-        p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 15 * 20, 1));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.RESISTANCE, duration,
+                plugin.getSettings().integer("abilities.archangel.resistance-amplifier", 1, 0, 255)));
+        p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, duration,
+                plugin.getSettings().integer("abilities.archangel.regeneration-amplifier", 1, 0, 255)));
 
-        World w = p.getWorld();
+        World world = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
-        w.spawnParticle(Particle.FLASH, start, 1);
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.fromRGB(255, 215, 0), 2.0f));
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.WHITE, 2.0f));
+        if (plugin.getSettings().bool("abilities.visuals.activation-flash", true)) {
+            world.spawnParticle(Particle.FLASH, start, 1);
+        }
+        int burstCount = plugin.getSettings().integer("abilities.visuals.activation-dust-count", 50, 0, 500);
+        float burstScale = particleScale("abilities.visuals.activation-dust-scale", 2.0f);
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.archangel.colors.inner", Color.fromRGB(255, 215, 0)), burstScale));
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color("abilities.archangel.colors.outer", Color.WHITE), burstScale));
 
-        int auraTask = new BukkitRunnable() {
+        data.archangelAuraTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!p.isOnline()) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    cancel();
                     return;
                 }
                 spawnArchangelAuraParticles(p);
             }
-        }.runTaskTimer(plugin, 0L, 2L).getTaskId();
+        }.runTaskTimer(plugin, 0L, auraUpdateTicks).getTaskId();
 
-        int healTask = new BukkitRunnable() {
+        data.archangelHealTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!p.isOnline()) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    cancel();
                     return;
                 }
                 double max = p.getAttribute(Attribute.MAX_HEALTH).getValue();
-                p.setHealth(Math.min(max, p.getHealth() + 4.0));
-                p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 5 * 20, 0));
-                p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.5f);
+                double healAmount = plugin.getSettings().decimal("abilities.archangel.heal-amount", 4.0, 0.0, 40.0);
+                p.setHealth(Math.min(max, p.getHealth() + healAmount));
+                p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION,
+                        durationTicks("abilities.archangel.heal-regeneration-duration-seconds", 5),
+                        plugin.getSettings().integer("abilities.archangel.heal-regeneration-amplifier", 0, 0, 255)));
+                p.playSound(p.getLocation(), plugin.getSettings().sound(
+                        "abilities.archangel.heal-sound", Sound.ENTITY_PLAYER_LEVELUP),
+                        (float) plugin.getSettings().decimal("abilities.archangel.heal-sound-volume", 0.8, 0.0, 2.0),
+                        (float) plugin.getSettings().decimal("abilities.archangel.heal-sound-pitch", 1.5, 0.5, 2.0));
 
                 Location loc = p.getLocation().add(0, 1.2, 0);
-                p.getWorld().spawnParticle(Particle.DUST, loc, 15, 0.5, 0.6, 0.5, 0,
-                        new Particle.DustOptions(Color.fromRGB(255, 230, 120), 1.5f));
-                p.getWorld().spawnParticle(Particle.DUST, loc, 15, 0.5, 0.6, 0.5, 0,
-                        new Particle.DustOptions(Color.WHITE, 1.5f));
+                int particleCount = plugin.getSettings().integer("abilities.archangel.heal-particle-count", 15, 0, 500);
+                float scale = particleScale("abilities.visuals.aura-dust-scale", 1.0f);
+                p.getWorld().spawnParticle(Particle.DUST, loc, particleCount, 0.5, 0.6, 0.5, 0,
+                        new Particle.DustOptions(plugin.getSettings().color(
+                                "abilities.archangel.colors.heal-inner", Color.fromRGB(255, 230, 120)), scale));
+                p.getWorld().spawnParticle(Particle.DUST, loc, particleCount, 0.5, 0.6, 0.5, 0,
+                        new Particle.DustOptions(plugin.getSettings().color("abilities.archangel.colors.outer", Color.WHITE), scale));
             }
-        }.runTaskTimer(plugin, 100L, 100L).getTaskId();
+        }.runTaskTimer(plugin, healInterval, healInterval).getTaskId();
 
-        Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            p.removePotionEffect(PotionEffectType.RESISTANCE);
-            p.removePotionEffect(PotionEffectType.REGENERATION);
-            Bukkit.getScheduler().cancelTask(auraTask);
-            Bukkit.getScheduler().cancelTask(healTask);
-        }, 15 * 20L);
+        data.archangelEndTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (dataMap.get(p.getUniqueId()) == data) {
+                p.removePotionEffect(PotionEffectType.RESISTANCE);
+                p.removePotionEffect(PotionEffectType.REGENERATION);
+                if (data.archangelAuraTask != -1) Bukkit.getScheduler().cancelTask(data.archangelAuraTask);
+                if (data.archangelHealTask != -1) Bukkit.getScheduler().cancelTask(data.archangelHealTask);
+            }
+            data.archangelAuraTask = -1;
+            data.archangelHealTask = -1;
+            data.archangelEndTask = -1;
+        }, duration).getTaskId();
 
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§e§lЗащита Архангела активирована!"));
-        p.playSound(p.getLocation(), Sound.ENTITY_ENDER_DRAGON_GROWL, 1f, 1.4f);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.archangel.activation-message", "&e&lЗащита Архангела активирована!")));
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.archangel.activation-sound", Sound.ENTITY_ENDER_DRAGON_GROWL), 1f, 1.4f);
     }
 
     private void spawnArchangelAuraParticles(Player p) {
-        World world = p.getWorld();
-        Location base = p.getLocation().clone();
-        double rot = (System.currentTimeMillis() % 3500) / 3500.0 * 2 * Math.PI;
-
-        double r = 1.2;
-        int points = 20;
-
-        for (int i = 0; i < points; i++) {
-            double angle = 2 * Math.PI * i / points + rot;
-            double x = Math.cos(angle) * r;
-            double z = Math.sin(angle) * r;
-            Location loc = base.clone().add(x, 0.9, z);
-
-            Color color = (i % 2 == 0) ? Color.fromRGB(255, 215, 0) : Color.fromRGB(255, 255, 255);
-
-            world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 2.0f));
-        }
+        double radius = plugin.getSettings().decimal("abilities.archangel.aura-radius", 1.2, 0.1, 8.0);
+        double yOffset = plugin.getSettings().decimal("abilities.archangel.aura-height", 0.9, -2.0, 4.0);
+        spawnParticleRing(p, radius, yOffset, getRingPointCount(radius),
+                plugin.getSettings().color("abilities.archangel.colors.inner", Color.fromRGB(255, 215, 0)),
+                plugin.getSettings().color("abilities.archangel.colors.outer", Color.WHITE));
     }
 
     // ==================== ТИР 4: Ультра Инстинкт (бело-голубая аура) ====================
-
-    private static final long ULTRA_INSTINCT_DURATION_TICKS = 15 * 20L; // 15 секунд
 
     private void activateUltraInstinct(Player p, PlayerAbilityData data) {
         long now = System.currentTimeMillis();
         if (now < data.ultraInstinctCooldownUntil) {
             long left = (data.ultraInstinctCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cУльтра Инстинкт перезаряжается: " + left + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.ultra-instinct.cooldown-message", "&cУльтра Инстинкт перезаряжается: {seconds}с")
+                    .replace("{seconds}", Long.toString(left))));
             return;
         }
 
-        data.ultraInstinctCooldownUntil = now + 120_000;
+        data.ultraInstinctCooldownUntil = now + cooldownMillis("abilities.ultra-instinct.cooldown-seconds", 120);
         data.ultraInstinctActive = true;
+        int duration = durationTicks("abilities.ultra-instinct.duration-seconds", 15);
+        int auraUpdateTicks = intervalTicks("abilities.visuals.ultra-aura-update-interval-ticks", 2);
 
-        // Скорость 2 (амплифаер 1)
-        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, (int) ULTRA_INSTINCT_DURATION_TICKS, 1));
-        DebugLog.log(plugin, "UI-ACTIVATE", "player=" + p.getName() + " durationMs=15000 cdMs=120000");
+        p.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, duration,
+                plugin.getSettings().integer("abilities.ultra-instinct.speed-amplifier", 1, 0, 255)));
 
-        World w = p.getWorld();
+        World world = p.getWorld();
         Location start = p.getLocation().add(0, 1, 0);
-        w.spawnParticle(Particle.FLASH, start, 1);
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.fromRGB(120, 220, 255), 1.6f));
-        w.spawnParticle(Particle.DUST, start, 50, 1.0, 1.0, 1.0, 0,
-                new Particle.DustOptions(Color.WHITE, 1.6f));
+        if (plugin.getSettings().bool("abilities.visuals.activation-flash", true)) {
+            world.spawnParticle(Particle.FLASH, start, 1);
+        }
+        int burstCount = plugin.getSettings().integer("abilities.visuals.activation-dust-count", 50, 0, 500);
+        float burstScale = particleScale("abilities.visuals.activation-dust-scale", 2.0f);
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color(
+                        "abilities.ultra-instinct.colors.inner", Color.fromRGB(120, 220, 255)), burstScale));
+        world.spawnParticle(Particle.DUST, start, burstCount, 1.0, 1.0, 1.0, 0,
+                new Particle.DustOptions(plugin.getSettings().color("abilities.ultra-instinct.colors.outer", Color.WHITE), burstScale));
 
-        int auraTask = new BukkitRunnable() {
+        data.ultraInstinctAuraTask = new BukkitRunnable() {
             @Override
             public void run() {
-                if (!p.isOnline()) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data) {
+                    cancel();
                     return;
                 }
                 spawnUltraInstinctAuraParticles(p);
             }
-        }.runTaskTimer(plugin, 0L, 2L).getTaskId();
-        data.ultraInstinctAuraTask = auraTask;
+        }.runTaskTimer(plugin, 0L, auraUpdateTicks).getTaskId();
 
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            // ДО УМА: если игрок умер/ушёл офлайн (или дуэль завершена и clear()
-            // уже снял эффекты) — не применяем passive-эффекты к трупу/оффлайну.
-            if (!p.isOnline() || p.isDead()) return;
-            DebugLog.log(plugin, "UI-EXPIRE", "player=" + p.getName() + " durationMs=15000");
+            if (!p.isOnline() || p.isDead() || dataMap.get(p.getUniqueId()) != data) return;
             data.ultraInstinctActive = false;
             reapplyPassiveEffects(p, data);
             if (data.ultraInstinctAuraTask != -1) Bukkit.getScheduler().cancelTask(data.ultraInstinctAuraTask);
             data.ultraInstinctAuraTask = -1;
-        }, ULTRA_INSTINCT_DURATION_TICKS);
+        }, duration);
 
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§b§lУльтра Инстинкт активирован!"));
-        p.playSound(p.getLocation(), Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR, 1f, 1.6f);
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.ultra-instinct.activation-message", "&b&lУльтра Инстинкт активирован!")));
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.ultra-instinct.activation-sound", Sound.ENTITY_ILLUSIONER_PREPARE_MIRROR), 1f, 1.6f);
     }
 
-    /**
-     * Маленькое бело-голубое кольцо вокруг игрока — визуально отличается от других аур
-     * меньшим радиусом и более быстрым вращением.
-     */
     private void spawnUltraInstinctAuraParticles(Player p) {
-        World world = p.getWorld();
-        Location base = p.getLocation().clone();
-        double rot = (System.currentTimeMillis() % 2000) / 2000.0 * 2 * Math.PI;
-
-        double r = 0.9;
-        int points = 18;
-
-        for (int i = 0; i < points; i++) {
-            double angle = 2 * Math.PI * i / points + rot;
-            double x = Math.cos(angle) * r;
-            double z = Math.sin(angle) * r;
-            Location loc = base.clone().add(x, 0.5, z);
-
-            Color color = (i % 2 == 0) ? Color.fromRGB(120, 220, 255) : Color.fromRGB(255, 255, 255);
-
-            world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 1.5f));
-        }
+        double radius = plugin.getSettings().decimal("abilities.ultra-instinct.aura-radius", 0.9, 0.1, 8.0);
+        double yOffset = plugin.getSettings().decimal("abilities.ultra-instinct.aura-height", 0.5, -2.0, 4.0);
+        int points = plugin.getSettings().integer("abilities.ultra-instinct.aura-points", 36, 8, 512);
+        spawnParticleRing(p, radius, yOffset, points,
+                plugin.getSettings().color("abilities.ultra-instinct.colors.inner", Color.fromRGB(120, 220, 255)),
+                plugin.getSettings().color("abilities.ultra-instinct.colors.outer", Color.WHITE));
     }
 
     // ==================== ТИР 4: Расширение территории (купол вокруг себя) ====================
-
-    private static final int DOME_RADIUS = 5;
 
     private void activateTerritoryExpansion(Player p, PlayerAbilityData data) {
         long now = System.currentTimeMillis();
         if (now < data.territoryCooldownUntil) {
             long left = (data.territoryCooldownUntil - now) / 1000 + 1;
-            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent("§cРасширение территории перезаряжается: " + left + "с"));
+            p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                    "abilities.territory.cooldown-message", "&cРасширение территории перезаряжается: {seconds}с")
+                    .replace("{seconds}", Long.toString(left))));
             return;
         }
 
-        data.territoryCooldownUntil = now + 120_000;
-
-        // Купол строится вокруг САМОГО СЕБЯ, цель не требуется — можно "промазать" по врагу
+        data.territoryCooldownUntil = now + cooldownMillis("abilities.territory.cooldown-seconds", 120);
         Location center = p.getLocation().getBlock().getLocation().add(0.5, 0, 0.5);
-        long start = System.currentTimeMillis();
-        int durationTicks = 15 * 20;
+        long startTime = System.currentTimeMillis();
+        int radius = plugin.getSettings().integer("abilities.territory.dome-radius", 5, 1, 12);
+        int duration = durationTicks("abilities.territory.duration-seconds", 15);
+        long durationMillis = duration * 50L;
+        buildTerritoryDome(center, radius, data);
 
-        buildTerritoryDome(center, DOME_RADIUS, data);
+        if (plugin.getSettings().bool("abilities.visuals.activation-flash", true)) {
+            p.getWorld().spawnParticle(Particle.FLASH, center.clone().add(0, 1, 0), 1);
+        }
+        p.playSound(center, plugin.getSettings().sound(
+                "abilities.territory.activation-sound", Sound.BLOCK_BEACON_ACTIVATE),
+                (float) plugin.getSettings().decimal("abilities.territory.activation-sound-volume", 1.0, 0.0, 2.0),
+                (float) plugin.getSettings().decimal("abilities.territory.activation-sound-pitch", 0.6, 0.5, 2.0));
+        p.playSound(p.getLocation(), plugin.getSettings().sound(
+                "abilities.territory.secondary-sound", Sound.ENTITY_ARMOR_STAND_BREAK),
+                (float) plugin.getSettings().decimal("abilities.territory.secondary-sound-volume", 1.0, 0.0, 2.0),
+                (float) plugin.getSettings().decimal("abilities.territory.secondary-sound-pitch", 1.0, 0.5, 2.0));
 
-        p.getWorld().spawnParticle(Particle.FLASH, center.clone().add(0, 1, 0), 1);
-        p.playSound(center, Sound.BLOCK_BEACON_ACTIVATE, 1f, 0.6f);
-        p.playSound(p.getLocation(), Sound.ENTITY_ARMOR_STAND_BREAK, 1f, 1f);
+        int particleInterval = plugin.getSettings().integer(
+                "abilities.territory.particle-update-interval-ticks", 3, 1, 1200);
+        int effectInterval = durationTicks("abilities.territory.effect-interval-seconds", 1);
+        int burstInterval = durationTicks("abilities.territory.burst-interval-seconds", 2);
 
-        int particleTask = new BukkitRunnable() {
+        data.territoryParticleTask = new BukkitRunnable() {
             @Override
             public void run() {
-                long elapsed = (System.currentTimeMillis() - start) / 1000;
-                if (elapsed >= 15) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data
+                        || System.currentTimeMillis() - startTime >= durationMillis) {
+                    cancel();
                     return;
                 }
-                spawnTerritoryInsideParticles(center, DOME_RADIUS);
+                spawnTerritoryInsideParticles(center, radius);
             }
-        }.runTaskTimer(plugin, 0L, 3L).getTaskId();
+        }.runTaskTimer(plugin, 0L, particleInterval).getTaskId();
 
-        int effectTask = new BukkitRunnable() {
+        data.territoryEffectTask = new BukkitRunnable() {
             @Override
             public void run() {
-                long elapsed = (System.currentTimeMillis() - start) / 1000;
-                if (elapsed >= 15) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data
+                        || System.currentTimeMillis() - startTime >= durationMillis) {
+                    cancel();
                     return;
                 }
-                applyTerritoryZoneEffects(p, center, DOME_RADIUS);
+                applyTerritoryZoneEffects(p, center, radius);
             }
-        }.runTaskTimer(plugin, 0L, 20L).getTaskId();
+        }.runTaskTimer(plugin, 0L, effectInterval).getTaskId();
 
-        int boomTask = new BukkitRunnable() {
+        data.territoryBoomTask = new BukkitRunnable() {
             @Override
             public void run() {
-                long elapsed = (System.currentTimeMillis() - start) / 1000;
-                if (elapsed >= 15) {
-                    this.cancel();
+                if (!p.isOnline() || dataMap.get(p.getUniqueId()) != data
+                        || System.currentTimeMillis() - startTime >= durationMillis) {
+                    cancel();
                     return;
                 }
-                spawnTerritoryBoom(p, center, DOME_RADIUS);
+                spawnTerritoryBoom(p, center, radius);
             }
-        }.runTaskTimer(plugin, 40L, 40L).getTaskId();
+        }.runTaskTimer(plugin, burstInterval, burstInterval).getTaskId();
 
-        data.territoryParticleTask = particleTask;
-        data.territoryEffectTask = effectTask;
-        data.territoryBoomTask = boomTask;
+        data.territoryDomeRemoveTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (data.territoryParticleTask != -1) Bukkit.getScheduler().cancelTask(data.territoryParticleTask);
+            if (data.territoryEffectTask != -1) Bukkit.getScheduler().cancelTask(data.territoryEffectTask);
+            if (data.territoryBoomTask != -1) Bukkit.getScheduler().cancelTask(data.territoryBoomTask);
+            if (dataMap.get(p.getUniqueId()) == data) removeTerritoryDome(center, radius, data);
+            data.territoryParticleTask = -1;
+            data.territoryEffectTask = -1;
+            data.territoryBoomTask = -1;
+            data.territoryDomeRemoveTask = -1;
+        }, duration).getTaskId();
 
-        int removeTask = Bukkit.getScheduler().runTaskLater(plugin, () -> {
-            Bukkit.getScheduler().cancelTask(particleTask);
-            Bukkit.getScheduler().cancelTask(effectTask);
-            Bukkit.getScheduler().cancelTask(boomTask);
-            removeTerritoryDome(center, DOME_RADIUS, data);
-        }, durationTicks).getTaskId();
-        data.territoryDomeRemoveTask = removeTask;
-
-        p.spigot().sendMessage(ChatMessageType.ACTION_BAR,
-                new TextComponent("§0§lРасширение территории активировано вокруг тебя!"));
+        p.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(plugin.getSettings().text(
+                "abilities.territory.activation-message", "&0&lРасширение территории активировано вокруг тебя!")));
     }
 
-    /**
-     * Каждую секунду накладывает Замедление 1 и Иссушение 1 на всех игроков (кроме каста),
-     * оказавшихся внутри купола НА ДАННЫЙ МОМЕНТ. Если враг не зашёл внутрь — эффекта не будет,
-     * это и есть "промах" по домену.
-     */
     private void applyTerritoryZoneEffects(Player caster, Location center, double radius) {
         World world = center.getWorld();
         for (Entity entity : world.getNearbyEntities(center, radius, radius, radius)) {
@@ -1208,8 +1114,11 @@ public class AbilityManager {
             if (target.equals(caster)) continue;
             if (target.getLocation().distance(center) > radius) continue;
 
-            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, 30, 0, true, false));
-            target.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 30, 0, true, false));
+            int effectTicks = plugin.getSettings().integer("abilities.territory.zone-effect-duration-ticks", 30, 1, 1200);
+            target.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, effectTicks,
+                    plugin.getSettings().integer("abilities.territory.slowness-amplifier", 0, 0, 255), true, false));
+            target.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, effectTicks,
+                    plugin.getSettings().integer("abilities.territory.wither-amplifier", 0, 0, 255), true, false));
         }
     }
 
@@ -1232,8 +1141,11 @@ public class AbilityManager {
                     data.territoryBlockStates.add(originalState);
 
                     boolean isWhite = ((x + y + z) & 1) == 0;
-                    Material mat = isWhite ? Material.WHITE_STAINED_GLASS : Material.BLACK_STAINED_GLASS;
-                    block.setType(mat, false);
+                    Material material = isWhite
+                            ? plugin.getSettings().material("abilities.territory.dome-material-a", Material.WHITE_STAINED_GLASS)
+                            : plugin.getSettings().material("abilities.territory.dome-material-b", Material.BLACK_STAINED_GLASS);
+                    if (!material.isBlock()) material = isWhite ? Material.WHITE_STAINED_GLASS : Material.BLACK_STAINED_GLASS;
+                    block.setType(material, false);
                 }
             }
         }
@@ -1248,8 +1160,13 @@ public class AbilityManager {
         }
         data.territoryBlockStates.clear();
 
-        world.spawnParticle(Particle.CLOUD, center.clone().add(0, radius / 2.0, 0), 40, radius * 0.4, radius * 0.4, radius * 0.4, 0.02);
-        world.playSound(center, Sound.BLOCK_GLASS_BREAK, 1f, 0.6f);
+        world.spawnParticle(Particle.CLOUD, center.clone().add(0, radius / 2.0, 0),
+                plugin.getSettings().integer("abilities.territory.dome-remove-particle-count", 40, 0, 1000),
+                radius * 0.4, radius * 0.4, radius * 0.4, 0.02);
+        world.playSound(center, plugin.getSettings().sound(
+                "abilities.territory.dome-remove-sound", Sound.BLOCK_GLASS_BREAK),
+                (float) plugin.getSettings().decimal("abilities.territory.dome-remove-sound-volume", 1.0, 0.0, 2.0),
+                (float) plugin.getSettings().decimal("abilities.territory.dome-remove-sound-pitch", 0.6, 0.5, 2.0));
     }
 
     private void restoreDomeBlocks(PlayerAbilityData data) {
@@ -1263,7 +1180,11 @@ public class AbilityManager {
     private void spawnTerritoryInsideParticles(Location center, double radius) {
         World world = center.getWorld();
 
-        for (int i = 0; i < 30; i++) {
+        int particleCount = plugin.getSettings().integer("abilities.territory.inside-particle-count", 30, 0, 1000);
+        Color colorA = plugin.getSettings().color("abilities.territory.colors.particle-a", Color.BLACK);
+        Color colorB = plugin.getSettings().color("abilities.territory.colors.particle-b", Color.WHITE);
+        float scale = particleScale("abilities.visuals.burst-dust-scale", 1.6f);
+        for (int i = 0; i < particleCount; i++) {
             double x = (random.nextDouble() - 0.5) * radius * 1.8;
             double y = random.nextDouble() * (radius + 1);
             double z = (random.nextDouble() - 0.5) * radius * 1.8;
@@ -1271,38 +1192,47 @@ public class AbilityManager {
             if (x * x + z * z > radius * radius) continue;
 
             Location loc = center.clone().add(x, y, z);
-            Color color = random.nextBoolean() ? Color.fromRGB(0, 0, 0) : Color.fromRGB(255, 255, 255);
+            Color color = random.nextBoolean() ? colorA : colorB;
 
             world.spawnParticle(Particle.DUST, loc, 1, 0, 0, 0, 0,
-                    new Particle.DustOptions(color, 1.6f));
+                    new Particle.DustOptions(color, scale));
         }
     }
 
     private void spawnTerritoryBoom(Player p, Location center, double radius) {
         World world = center.getWorld();
-
-        world.spawnParticle(Particle.EXPLOSION, center.clone().add(0, 1, 0), 1);
-        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), 30, 0.6, 0.6, 0.6, 0,
-                new Particle.DustOptions(Color.BLACK, 1.6f));
-        world.spawnParticle(Particle.DUST, center.clone().add(0, 1, 0), 30, 0.6, 0.6, 0.6, 0,
-                new Particle.DustOptions(Color.WHITE, 1.6f));
-        world.playSound(center, Sound.ENTITY_GENERIC_EXPLODE, 0.8f, 1.2f);
+        Location effectLocation = center.clone().add(0, 1, 0);
+        if (plugin.getSettings().bool("abilities.territory.burst-explosion-particle", true)) {
+            world.spawnParticle(Particle.EXPLOSION, effectLocation, 1);
+        }
+        int particleCount = plugin.getSettings().integer("abilities.territory.burst-particle-count", 30, 0, 1000);
+        float scale = particleScale("abilities.visuals.burst-dust-scale", 1.6f);
+        world.spawnParticle(Particle.DUST, effectLocation, particleCount, 0.6, 0.6, 0.6, 0,
+                new Particle.DustOptions(plugin.getSettings().color("abilities.territory.colors.particle-a", Color.BLACK), scale));
+        world.spawnParticle(Particle.DUST, effectLocation, particleCount, 0.6, 0.6, 0.6, 0,
+                new Particle.DustOptions(plugin.getSettings().color("abilities.territory.colors.particle-b", Color.WHITE), scale));
+        world.playSound(center, plugin.getSettings().sound(
+                "abilities.territory.burst-sound", Sound.ENTITY_GENERIC_EXPLODE),
+                (float) plugin.getSettings().decimal("abilities.territory.burst-sound-volume", 0.8, 0.0, 2.0),
+                (float) plugin.getSettings().decimal("abilities.territory.burst-sound-pitch", 1.2, 0.5, 2.0));
 
         for (Entity entity : world.getNearbyEntities(center, radius, radius, radius)) {
-            if (!(entity instanceof Player victim)) continue;
-            if (victim.equals(p)) continue;
+            if (!(entity instanceof Player victim) || victim.equals(p)) continue;
             if (victim.getLocation().distance(center) > radius) continue;
 
-            victim.damage(6.0, p);
-            victim.addPotionEffect(new PotionEffect(PotionEffectType.WITHER, 3 * 20, 2));
+            victim.damage(plugin.getSettings().decimal("abilities.territory.burst-damage", 6.0, 0.0, 2048.0), p);
+            victim.addPotionEffect(new PotionEffect(PotionEffectType.WITHER,
+                    durationTicks("abilities.territory.wither-duration-seconds", 3),
+                    plugin.getSettings().integer("abilities.territory.burst-wither-amplifier", 2, 0, 255)));
 
-            Vector dir = victim.getLocation().toVector().subtract(center.toVector());
-            if (dir.lengthSquared() < 0.0001) {
-                dir = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
+            Vector direction = victim.getLocation().toVector().subtract(center.toVector());
+            if (direction.lengthSquared() < 0.0001) {
+                direction = new Vector(random.nextDouble() - 0.5, 0, random.nextDouble() - 0.5);
             }
-            dir.normalize().multiply(0.5);
-            dir.setY(0.2);
-            victim.setVelocity(dir);
+            direction.normalize().multiply(plugin.getSettings().decimal(
+                    "abilities.territory.knockback-horizontal", 0.5, 0.0, 10.0));
+            direction.setY(plugin.getSettings().decimal("abilities.territory.knockback-vertical", 0.2, 0.0, 5.0));
+            victim.setVelocity(direction);
         }
     }
 }

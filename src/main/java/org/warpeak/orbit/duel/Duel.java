@@ -36,20 +36,21 @@ public class Duel {
         p1SavedGameMode = player1.getGameMode();
         p2SavedGameMode = player2.getGameMode();
 
-        sendStatus(player1, "§eПодготовка арены...");
-        sendStatus(player2, "§eПодготовка арены...");
+        sendStatus(player1, Orbit.get().getSettings().text("messages.duel.prepare-arena", "&eПодготовка арены..."));
+        sendStatus(player2, Orbit.get().getSettings().text("messages.duel.prepare-arena", "&eПодготовка арены..."));
 
         boolean success = arenaManager.pasteArena(arenaLocation);
 
         if (!success) {
-            player1.sendMessage(ChatColor.RED + "Ошибка создания арены! Дуэль отменена.");
-            player2.sendMessage(ChatColor.RED + "Ошибка создания арены! Дуэль отменена.");
+            String error = Orbit.get().getSettings().text("messages.duel.arena-create-failed", "&cОшибка создания арены! Дуэль отменена.");
+            player1.sendMessage(error);
+            player2.sendMessage(error);
             Orbit.get().getDuelManager().endDuel(this);
             return;
         }
 
-        sendStatus(player1, "§eТелепортация игроков...");
-        sendStatus(player2, "§eТелепортация игроков...");
+        sendStatus(player1, Orbit.get().getSettings().text("messages.duel.teleporting", "&eТелепортация игроков..."));
+        sendStatus(player2, Orbit.get().getSettings().text("messages.duel.teleporting", "&eТелепортация игроков..."));
 
         FileConfiguration cfg = Orbit.get().getConfig();
         double s1x = cfg.getDouble("arena.spawn1.x", 5);
@@ -71,22 +72,39 @@ public class Duel {
         player1.setGameMode(GameMode.SURVIVAL);
         player2.setGameMode(GameMode.SURVIVAL);
 
-        sendStatus(player1, "§eВыдача снаряжения...");
-        sendStatus(player2, "§eВыдача снаряжения...");
+        sendStatus(player1, Orbit.get().getSettings().text("messages.duel.giving-kit", "&eВыдача снаряжения..."));
+        sendStatus(player2, Orbit.get().getSettings().text("messages.duel.giving-kit", "&eВыдача снаряжения..."));
 
         ItemsUtil.giveKit(player1);
         ItemsUtil.giveKit(player2);
 
-        player1.setHealth(20);
-        player2.setHealth(20);
-        player1.setFoodLevel(20);
-        player2.setFoodLevel(20);
+        double startHealth = Orbit.get().getSettings().decimal("duel.starting-health", 20.0, 1.0, 40.0);
+        int startFood = Orbit.get().getSettings().integer("duel.starting-food-level", 20, 0, 20);
+        player1.setHealth(Math.min(startHealth, player1.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+        player2.setHealth(Math.min(startHealth, player2.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue()));
+        player1.setFoodLevel(startFood);
+        player2.setFoodLevel(startFood);
 
         Orbit.get().getAbilityManager().startForPlayer(player1);
         Orbit.get().getAbilityManager().startForPlayer(player2);
 
-        player1.sendTitle(ChatColor.RED + "Дуэль", ChatColor.GRAY + "против " + player2.getName(), 10, 40, 10);
-        player2.sendTitle(ChatColor.RED + "Дуэль", ChatColor.GRAY + "против " + player1.getName(), 10, 40, 10);
+        String title = Orbit.get().getSettings().text("messages.duel.start-title", "&cДуэль");
+        int fadeIn = Orbit.get().getSettings().integer("duel.title-fade-in-ticks", 10, 0, 1200);
+        int stay = Orbit.get().getSettings().integer("duel.title-stay-ticks", 40, 0, 1200);
+        int fadeOut = Orbit.get().getSettings().integer("duel.title-fade-out-ticks", 10, 0, 1200);
+        player1.sendTitle(title, Orbit.get().getSettings().text("messages.duel.start-subtitle", "&7против {player}")
+                .replace("{player}", player2.getName()), fadeIn, stay, fadeOut);
+        player2.sendTitle(title, Orbit.get().getSettings().text("messages.duel.start-subtitle", "&7против {player}")
+                .replace("{player}", player1.getName()), fadeIn, stay, fadeOut);
+    }
+
+    private double configuredHealth(Player p) {
+        return Math.min(Orbit.get().getSettings().decimal("duel.restore-health", 20.0, 1.0, 40.0),
+                p.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH).getValue());
+    }
+
+    private int configuredFoodLevel() {
+        return Orbit.get().getSettings().integer("duel.restore-food-level", 20, 0, 20);
     }
 
     private void restorePlayerState(Player p) {
@@ -97,10 +115,10 @@ public class Duel {
 
         p.setGameMode(savedMode);
         p.getInventory().setContents(savedInv);
-        p.setFoodLevel(20);
+        p.setFoodLevel(configuredFoodLevel());
 
         // Гарантируем что компас всегда на месте после дуэли
-        if (!p.getInventory().contains(org.bukkit.Material.COMPASS)) {
+        if (!org.warpeak.orbit.items.ItemsUtil.hasCompassMenuItem(p)) {
             p.getInventory().addItem(org.warpeak.orbit.items.ItemsUtil.createCompass());
         }
     }
@@ -121,7 +139,9 @@ public class Duel {
         restorePlayerState(player2);
 
         if (winner != null && loser != null) {
-            Bukkit.broadcastMessage(ChatColor.GOLD + winner.getName() + ChatColor.YELLOW + " победил в дуэли против " + loser.getName());
+            Bukkit.broadcastMessage(Orbit.get().getSettings().text(
+                    "messages.duel.winner-broadcast", "&6{winner}&e победил в дуэли против &6{loser}")
+                    .replace("{winner}", winner.getName()).replace("{loser}", loser.getName()));
             giveRewards(winner, loser);
         }
 
@@ -145,7 +165,9 @@ public class Duel {
         restorePlayerState(loser);
 
         if (winner != null && loser != null) {
-            Bukkit.broadcastMessage(ChatColor.GOLD + winner.getName() + ChatColor.YELLOW + " победил в дуэли против " + loser.getName());
+            Bukkit.broadcastMessage(Orbit.get().getSettings().text(
+                    "messages.duel.winner-broadcast", "&6{winner}&e победил в дуэли против &6{loser}")
+                    .replace("{winner}", winner.getName()).replace("{loser}", loser.getName()));
             giveRewards(winner, loser);
         }
 
@@ -179,8 +201,8 @@ public class Duel {
         Location target = getRestoreLocation(null); // всегда лобби, без варианта "исходное место"
 
         p.setGameMode(savedMode);
-        p.setHealth(20);
-        p.setFoodLevel(20);
+        p.setHealth(configuredHealth(p));
+        p.setFoodLevel(configuredFoodLevel());
         p.getInventory().setContents(savedInv);
         p.teleport(target);
     }
@@ -188,8 +210,8 @@ public class Duel {
     private void applyRestore(Player p, Location loc, ItemStack[] inv, GameMode mode) {
         try {
             p.setGameMode(mode);
-            p.setHealth(20);
-            p.setFoodLevel(20);
+            p.setHealth(configuredHealth(p));
+            p.setFoodLevel(configuredFoodLevel());
             p.getInventory().setContents(inv);
             p.teleport(loc);
         } catch (Exception e) {

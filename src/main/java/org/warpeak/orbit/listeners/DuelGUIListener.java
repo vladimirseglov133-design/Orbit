@@ -21,7 +21,7 @@ public class DuelGUIListener implements Listener {
 
     @EventHandler
     public void onClick(InventoryClickEvent event) {
-        if (!event.getView().getTitle().equals(DuelSelectGUI.TITLE)) return;
+        if (!event.getView().getTitle().equals(DuelSelectGUI.getTitle())) return;
         event.setCancelled(true);
 
         ItemStack clicked = event.getCurrentItem();

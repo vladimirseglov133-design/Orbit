@@ -27,10 +27,10 @@ public class CombatAbilityListener implements Listener {
         Duel duel = duelManager.getDuel(victim);
         if (duel == null || !duel.getOpponent(victim).equals(attacker)) return;
 
-        boolean dodged = Orbit.get().getAbilityManager().tryDodge(victim, attacker, event);
+        boolean dodged = Orbit.get().getAbilityManager().tryDodge(victim, event);
         if (dodged) return;
 
-        boolean instinctDodged = Orbit.get().getAbilityManager().tryUltraInstinctDodge(victim, attacker, event);
+        boolean instinctDodged = Orbit.get().getAbilityManager().tryUltraInstinctDodge(victim, event);
         if (instinctDodged) return;
 
         Orbit.get().getAbilityManager().onHit(attacker, victim, event);

@@ -30,7 +30,7 @@ public class SetCaseCommand implements CommandExecutor {
             return true;
         }
 
-        long price = 100;
+        long price = Orbit.get().getCaseManager().getPrice();
         if (args.length >= 1) {
             try {
                 price = Long.parseLong(args[0]);

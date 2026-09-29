@@ -27,7 +27,8 @@ public class CaseChestListener implements Listener {
 
         Player player = event.getPlayer();
         if (Orbit.get().getCaseManager().isOpening(player)) {
-            player.sendMessage("§cДождитесь окончания текущей анимации!");
+            player.sendMessage(Orbit.get().getSettings().text(
+                    "messages.case.animation-running", "&cДождитесь окончания текущей анимации!"));
             return;
         }
 

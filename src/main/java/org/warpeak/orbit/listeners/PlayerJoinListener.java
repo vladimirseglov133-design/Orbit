@@ -12,7 +12,7 @@ public class PlayerJoinListener implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player p = event.getPlayer();
-        if (!p.getInventory().contains(Material.COMPASS)) {
+        if (!ItemsUtil.hasCompassMenuItem(p)) {
             p.getInventory().addItem(ItemsUtil.createCompass());
         }
     }

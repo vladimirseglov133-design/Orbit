@@ -15,10 +15,6 @@ public class StrongFishingRodListener implements Listener {
 
     private static final NamespacedKey ROD_KEY = new NamespacedKey(Orbit.get(), "strong_fishing_rod");
 
-    // Множитель силы притяжения. Ванильный крюк тянет слабо (~0.2),
-    // мы делаем в разы сильнее.
-    private static final double PULL_STRENGTH = 1.8;
-    private static final double PULL_Y_BOOST = 0.35;
 
     @EventHandler
     public void onFish(PlayerFishEvent event) {
@@ -38,13 +34,17 @@ public class StrongFishingRodListener implements Listener {
 
         if (direction.lengthSquared() < 0.0001) return;
 
-        direction.normalize().multiply(PULL_STRENGTH);
-        direction.setY(Math.max(direction.getY(), PULL_Y_BOOST));
+        direction.normalize().multiply(Orbit.get().getSettings().decimal(
+                "duel-kit.fishing-rod.pull-strength", 1.8, 0.0, 10.0));
+        double yBoost = Orbit.get().getSettings().decimal(
+                "duel-kit.fishing-rod.pull-y-boost", 0.35, 0.0, 5.0);
+        direction.setY(Math.max(direction.getY(), yBoost));
 
         caught.setVelocity(direction);
 
         caught.getWorld().playSound(caught.getLocation(),
-                org.bukkit.Sound.ENTITY_FISHING_BOBBER_RETRIEVE, 1f, 1f);
+                Orbit.get().getSettings().sound("duel-kit.fishing-rod.pull-sound",
+                        org.bukkit.Sound.ENTITY_FISHING_BOBBER_RETRIEVE), 1f, 1f);
     }
 
     private boolean isStrongRod(ItemStack item) {

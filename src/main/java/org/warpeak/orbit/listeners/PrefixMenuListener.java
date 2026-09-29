@@ -25,9 +25,11 @@ public class PrefixMenuListener implements Listener {
     public static final NamespacedKey ITEM_KEY_PUBLIC = new NamespacedKey(Orbit.get(), "prefix_menu_item");
 
     public static ItemStack createMenuItem() {
-        ItemStack item = new ItemStack(Material.NAME_TAG);
+        ItemStack item = new ItemStack(Orbit.get().getSettings().material(
+                "prefix-menu.item.material", Material.NAME_TAG));
         ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName("§dПрефиксы");
+        if (meta == null) return item;
+        meta.setDisplayName(Orbit.get().getSettings().text("prefix-menu.item.name", "&dПрефиксы"));
         meta.getPersistentDataContainer().set(ITEM_KEY_PUBLIC, PersistentDataType.BYTE, (byte) 1);
         item.setItemMeta(meta);
         return item;
@@ -73,16 +75,16 @@ public class PrefixMenuListener implements Listener {
 
     @EventHandler
     public void onClick(InventoryClickEvent event) {
-        if (!event.getView().getTitle().equals(PrefixMenuGUI.TITLE)) return;
+        if (!event.getView().getTitle().equals(PrefixMenuGUI.getTitle())) return;
         event.setCancelled(true);
 
         if (!(event.getWhoClicked() instanceof Player player)) return;
         int slot = event.getRawSlot();
 
-        if (slot == PrefixMenuGUI.UNEQUIP_SLOT) {
+        if (slot == PrefixMenuGUI.getUnequipSlot()) {
             if (Orbit.get().getPrefixManager().getEquipped(player) != null) {
                 Orbit.get().getPrefixManager().unequip(player);
-                player.sendMessage("§7Префикс снят.");
+                player.sendMessage(Orbit.get().getSettings().text("messages.prefix.unequipped", "&7Префикс снят."));
                 player.openInventory(PrefixMenuGUI.build(player));
             }
             return;
@@ -92,17 +94,18 @@ public class PrefixMenuListener implements Listener {
         if (prize == null) return;
 
         if (!Orbit.get().getPrefixManager().isUnlocked(player, prize)) {
-            player.sendMessage("§cВы ещё не получили этот приз из кейса!");
+            player.sendMessage(Orbit.get().getSettings().text("messages.prefix.locked", "&cВы ещё не получили этот приз из кейса!"));
             return;
         }
 
         CasePrize equipped = Orbit.get().getPrefixManager().getEquipped(player);
         if (equipped == prize) {
             Orbit.get().getPrefixManager().unequip(player);
-            player.sendMessage("§7Префикс снят.");
+            player.sendMessage(Orbit.get().getSettings().text("messages.prefix.unequipped", "&7Префикс снят."));
         } else {
             Orbit.get().getPrefixManager().equip(player, prize);
-            player.sendMessage("§aНадет префикс: " + prize.getColoredDisplay());
+            player.sendMessage(Orbit.get().getSettings().text("messages.prefix.equipped", "&aНадет префикс: {prize}")
+                    .replace("{prize}", prize.getColoredDisplay()));
         }
 
         player.openInventory(PrefixMenuGUI.build(player));
@@ -110,7 +113,7 @@ public class PrefixMenuListener implements Listener {
 
     @EventHandler
     public void onDrag(InventoryDragEvent event) {
-        if (event.getView().getTitle().equals(PrefixMenuGUI.TITLE)) {
+        if (event.getView().getTitle().equals(PrefixMenuGUI.getTitle())) {
             event.setCancelled(true);
         }
     }
