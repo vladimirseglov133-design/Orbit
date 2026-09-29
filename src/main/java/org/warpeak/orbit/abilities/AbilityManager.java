@@ -593,7 +593,7 @@ public class AbilityManager {
         double startRadius = plugin.getSettings().decimal(
                 "abilities.visuals.expanding-wave-start-radius", 0.35, 0.01, maxStartRadius);
         double yOffset = plugin.getSettings().decimal("abilities.visuals.expanding-wave-y-offset", 0.1, -2.0, 4.0);
-        // DUST has a randomized lifetime; TRAIL moves every point to the rim over the same duration.
+        // Each TRAIL particle has one exact destination and a fixed arrival time.
         int travelTicks = Math.max(1, durationTicks);
 
         for (int i = 0; i < points; i++) {
@@ -603,7 +603,7 @@ public class AbilityManager {
             Location start = center.clone().add(directionX * startRadius, yOffset, directionZ * startRadius);
             Location target = center.clone().add(directionX * maxRadius, yOffset, directionZ * maxRadius);
             Color color = (i % 2 == 0) ? firstColor : secondColor;
-            world.spawnParticle(Particle.TRAIL, start, 0, 0, 0, 0, 0,
+            world.spawnParticle(Particle.TRAIL, start, 1, 0, 0, 0,
                     new Particle.Trail(target, color, travelTicks));
         }
     }
